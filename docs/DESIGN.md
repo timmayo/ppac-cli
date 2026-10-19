@@ -36,6 +36,8 @@ Scope rules:
 - Standalone, single-file binary per OS (Windows, Linux, macOS). No runtime required on the target machine.
 - Proposed stack: .NET with MSAL for auth and the Microsoft.PowerPlatform.Management SDK where it covers an operation, raw REST otherwise. **(verify SDK coverage per namespace)**
 - Usable from bash, PowerShell, GitHub Actions, and Azure DevOps. PowerShell users parse JSON with `ConvertFrom-Json`.
+- Install parity with `pac`. PAC offers a .NET tool (`dotnet tool install --global Microsoft.PowerApps.CLI.Tool`, with matching `update` and `uninstall`), a Windows MSI (`pac install latest`, `pac use` to switch versions) and a VS Code extension. ppac mirrors the .NET tool: package ID `TimMayo.Ppac.Cli.Tool`, command `ppac`, version `0.1.0-preview.1`. Verified locally on 2026-10-19: `dotnet pack`, then `dotnet tool install --global TimMayo.Ppac.Cli.Tool --add-source artifacts/nupkg --prerelease`, then `ppac --version` and `ppac --help`. A single-file self-contained executable (`dotnet publish -r win-x64 --self-contained -p:PublishSingleFile=true`) is the no-.NET alternative; it has not been run or measured. Not done: publishing to nuget.org (needs a license choice and an API key), a release pipeline, an MSI, code signing.
+- Startup behavior: a banner is shown for a bare `ppac` and for `ppac --help` when stderr is a terminal. It goes to stderr and `PPAC_NO_BANNER` turns it off. A command group typed alone runs its `list` (`env`, `group`, `inventory`, `auth`); `op` and `env backup` show their help because their list needs an environment. The rewrite only applies when the group is the whole command path, so a mistyped subcommand still fails with exit 2.
 
 ## 3. Command structure
 
@@ -80,7 +82,7 @@ ppac
 | license billing-plan, capacity | Power Platform API (`licensing`, capacity report) | Confirmed to exist |
 | dlp | Admin DLP APIs | Confirmed to exist |
 | solution, package | Dataverse Web API per environment (`ExportSolution`, `ImportSolution`, `ImportSolutionAsync`, `StageSolution`) | Confirmed for solutions; package deploy has no Web API equivalent found, may need Package Deployer |
-| tenant settings | `pac admin list-tenant-settings`, `pac admin update-tenant-settings` (single setting by name/value, or a settings file); native endpoint **(verify)** | Confirmed in pac |
+| tenant settings | Read: BAP `POST https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/listtenantsettings?api-version=2020-10-01` (preview), proven live with a delegated token (see 4.7.3). Update: `pac admin update-tenant-settings` exists (single setting by name/value, or a settings file); the native update endpoint is **(verify)** | Read confirmed live; update unverified |
 | env governance (Managed Environments), admin mode | `pac admin set-governance-config`, `pac admin set-runtime-state`; native endpoint **(verify)** | Confirmed in pac |
 | env lifecycle extras | `pac admin` also has `backup`, `restore`, `reset`, `delete`, `set-backup-retention-period`, `assign-user`, `assign-group`, `add-group`, `self-elevate`, `status`, and `query` (tenant-level resource query) | Confirmed in pac |
 | copilot settings | Permissions exist (`CopilotGovernance.Settings.*`); endpoints **(verify)** | Partial |
@@ -234,10 +236,10 @@ Observed behavior (live, 2026-10-19):
 Open items:
 - `ValidateOnly` is honored for delete (no operation created) and is not honored for copy (a real Copy started). Treat `ValidateOnly` as unreliable per endpoint and verify on a throwaway before using it for any other command.
 - `NoOperation` and `ValidationPassed` are treated as finished successfully, which is an assumption.
-- I found no create-environment operation in this API. `pac admin create` uses the older BAP API. `env create` is deferred pending a decision on using BAP.
+- No create-environment operation exists in this API. Checked 2026-10-19: the reference's Environments group lists only `Get Environment By Id For User` and `List Environments For User`, and the Environment Management Settings group (create, list, update) is about settings, not environments. `pac admin create` uses the older BAP API, so `env create` will use BAP (see 4.7.3) behind an isolated client, marked preview, and can move to the newer API if a create operation appears. The BAP create endpoint has not been read from its docs yet **(verify)**. Test creates without Dataverse only (like `test` and `test2`), because a Dataverse sandbox took about 49 minutes.
 - Restore (`Restore Environment`, `Get Restore Candidates`) and copy candidates exist in the reference and are not built yet.
 
-#### 4.7.2 Inventory (`ppac inventory list`)
+#### 4.7.2 Inventory (`ppac inventory list` and `show`)
 
 Source: Microsoft's inventory API page (`POST /resourcequery/resources/query?api-version=2024-10-01`), checked against live output on 2026-10-19.
 
@@ -250,4 +252,87 @@ Source: Microsoft's inventory API page (`POST /resourcequery/resources/query?api
 - One paged run (`--page-size 50`) returned 674 rows against 675 for a single page. A repeat comparison returned identical row sets with no duplicates, so the cause is unknown and probably a change between calls. 18 rows have no `lastModifiedAt` and tie in the sort, and the service gives no stable order among ties. A secondary `orderby name` would fix that, but was not tested. If a mismatch recurs, test it.
 - Polymorphic clauses need `$type` as the first property of each clause object. Building the body with PowerShell hashtables put it in a random position and the service answered 400; use `[ordered]` or a JSON string.
 - The environment name and type come from the environment list, matched on `environmentId`.
-- Verified live: `orderby tostring(properties.lastModifiedAt) desc` (newest first), `orderby name asc`, paging by `SkipToken` (page sizes 1000 and 50), the `in~` filters on `properties.environmentId` (`--env`) and `properties.ownerId` (`--owner`), and the environment name and type lookup. Not yet checked: whether `Default-<guid>`
+- Verified live: `orderby tostring(properties.lastModifiedAt) desc` (newest first), `orderby name asc`, paging by `SkipToken` (page sizes 1000 and 50), the `in~` filters on `properties.environmentId` (`--env`) and `properties.ownerId` (`--owner`), and the environment name and type lookup. Not yet checked: whether `Default-<guid>` environment IDs match `properties.environmentId`.
+- `inventory show <item-id>` finds the item with `where type in~ [...]` plus `where name in~ ['<id>']`, then its usage record with `where type in~ ['microsoft.powerplatformusage/usagerecords']` plus `where properties.resourceId in~ ['<id>']`. Both filters were verified live on a cloud flow (2026-10-19).
+- A usage record is one row per item with only `properties.resourceId` (the item ID) and `properties.lastUsed`. Its `id` nests under the item (`.../providers/Microsoft.PowerPlatformUsage/usageRecords/default`). `lastUsed` is date-granular (always `23:59:59Z`). 164 of 675 items had a record; items without one show an empty `lastUsed`.
+- The detail view was compared with the admin center's item pane for one flow. Name, type, item ID, environment, created and updated times, and connectors with their operations match. Gaps: owner, creator and updater are object IDs (names need Microsoft Graph, tabled); the trigger is the operation ID (`RequestHttp`) where the pane shows display text ("Request", "When an HTTP Request is received"), which the API does not return; `trigger.connectorId` is empty for the built-in HTTP trigger; region is the raw value (`unitedstates`); the Item URL is not returned.
+- Environment details: an environment record carries `environmentGroupId` only when it is in a group (absent on Dev) and `protectionLevel` (`Standard` or `Basic`). Dev, which the admin center shows as Managed: Yes, has `Standard`. That `protectionLevel` means Managed is not confirmed **(verify** the Managed column for one `Standard` and one `Basic` environment**)**.
+
+#### 4.7.3 Tenant settings and the BAP API (`ppac tenant-settings`, not built yet)
+
+- Read endpoint (preview): `POST https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/listtenantsettings?api-version=2020-10-01`, no request body. Proven live on 2026-10-19 with a delegated token.
+- Token: a different resource from the Power Platform API. Scope `https://service.powerapps.com//.default` (Power Apps Service API, app ID `475226c6-020e-4fb2-8a90-7a972cbfc1d4`), taken from Microsoft's legacy authentication page, which does not mention BAP; it worked. The app registration needs the delegated permission "User permissions - Access the Power Apps Service API" and admin consent. Without it the sign-in fails with `AADSTS650057: Invalid resource`. `ppac auth token --scope <scope>` returns such a token (silently, or after one browser consent prompt) and was used for the probe.
+- Response: one JSON object with flat flags at the top (`disableEnvironmentCreationByNonAdminUsers`, `disableSurveyFeedback`, `fedRampCompliance`, and others) and a `powerPlatform` object with the groups `search`, `teamsIntegration`, `powerApps`, `powerAutomate`, `environments`, `governance`, `licensing`, `powerPages`, `champions`, `intelligence`, `modelExperimentation`, `catalogSettings`, `userManagementSettings`, `helpSupportSettings`, `gccCommercialSettings`, `businessResearchAgent` and `securitySettings`. The docs spell some names inconsistently; the live response is the reference.
+- Names differ from the admin center's Tenant settings page, and many flags are inverted (`disable...`): the page's "Power Automate flow run resubmission: Enabled" is `powerAutomate.disableFlowRunResubmission: false`. Matches confirmed by value against the page: Canvas app insights (`powerApps.enableCanvasAppInsights`), Flow run resubmission, Desktop flow actions in DLP (`governance.policy.enableDesktopFlowDataPolicyManagement`), Catalog assignments (`catalogSettings.powerCatalogAudienceSetting`), Copilot Studio authors (`intelligence.copilotStudioAuthorsSecurityGroupId`). Plausible but not confirmed: Environment routing and Weekly digest (`governance.*`), Developer and Trial environment assignments. No counterpart found for Customer Lockbox and Analytics. Do not hard-code a page-to-API mapping until each row is verified.
+- Status: the endpoint is labelled preview and documents no deprecation. Microsoft's versioning page lists `2020-10-01` (the BAP API) as generally available with no deprecation or decommission date, says its functionality is available in newer Power Platform API versions, and promises at least 12 months between deprecation and retirement. No equivalent tenant-settings endpoint was found on `api.powerplatform.com` (searched 2026-10-19; absence of a result is not proof). Plan: an isolated BAP client, commands marked preview, one place to change if Microsoft moves it.
+- Update: `pac admin update-tenant-settings` exists; the native update endpoint has not been read yet **(verify)**. It changes the tenant, so test it with a harmless setting only.
+- Not tested: whether BAP accepts a service principal for tenant settings.
+
+### 4.8 Composability
+- Resources accept a name or GUID. An ambiguous name fails with exit 2 and lists candidates on stderr.
+- `-q, --id-only` prints one identifier per line, for `xargs` and loops.
+- Targeting: `--env <name|id>`. Default from `ppac config set default.env <name>`. Flag > env var (`PPAC_ENV`) > config file > built-in default.
+- Commands that take tenant-wide scope do not require `--env`. Environment-scoped commands (solution, package) always do.
+
+### 4.9 Resilience
+- Retry transient failures (429, 5xx) with exponential backoff and jitter, honoring `Retry-After`.
+- `--max-retries <n>` (default 5) and `--concurrency <n>` for bulk operations.
+- Known service limit to respect: the Power Platform for Admins V2 connector documents 100 calls per 60 seconds per connection. **(verify limits for the REST API directly)**
+
+### 4.10 Escape hatch
+`ppac api <METHOD> <path> [--body <json|@file>] [--api-version <v>]` makes an authenticated call and prints the response body to stdout. This keeps users unblocked when a typed command does not exist or an endpoint is still in preview.
+
+## 5. CLI conventions
+
+- Noun-verb structure, kebab-case long flags, short flags only for the most common (`-o`, `-q`, `-h`).
+- `--help` on every command and group, with at least one real example.
+- `--version`; `ppac completion bash|zsh|powershell` for shell completion.
+- `--verbose` (request summaries) and `--debug` (full detail, secrets redacted), both to stderr.
+- Config file at the standard per-OS config location. Environment variables prefixed `PPAC_`.
+- Semantic versioning. Contract changes (output shape, exit codes, flag removal) only in major versions, with a deprecation period and a stderr warning first.
+- Preview/beta API usage is flagged in `--help` and in verbose output, since those endpoints can change.
+
+## 6. Examples
+
+```bash
+# Delete inactive sandbox environments (dry run first)
+ppac env list --type sandbox -o json \
+  | jq -r '.[] | select(.lastActivity < "2026-07-01") | .id' \
+  | xargs -I{} ppac env delete {} --whatif
+
+# Export a solution from Dev and import it to Test, non-interactive
+ppac solution export MySolution --env Dev --managed --out ./MySolution.zip
+ppac solution import ./MySolution.zip --env Test --yes --timeout 30m
+```
+
+```powershell
+$envs = ppac env list -o json | ConvertFrom-Json
+if ($LASTEXITCODE -eq 3) { throw "Not authenticated" }
+```
+
+## 7. Testing
+
+- Golden-file tests for JSON output of every command (guards the contract).
+- Exit code tests for each documented code.
+- Non-interactive behavior tests (no TTY, no prompts, `--yes` required).
+- Recorded-response tests for API calls. A live smoke suite against a dev tenant, run manually.
+- Contract tests fail the build on any unannounced shape change.
+
+## 8. Phased plan
+
+1. Foundation: auth, config, output formatting, exit codes, retry, `api`, `op`. **Status:** done and tested for signed-in admin auth (`auth create|list|select|delete|clear|name|who|token|logout`, named profiles), output formats, exit codes, retry and paging, `api`, `env list|show|delete|copy|backup`, `op list|show|wait`, `inventory list|show`, the startup banner, default list for command groups, and local .NET tool packaging. Remaining: service principal, certificate, managed identity and federated auth (`auth create` options, `auth setup`).
+2. Confirmed groups: `env`, `group`, `inventory`, `dlp`, `solution`, `package`, `security recommendations`, `license` (billing plans, capacity).
+3. Verify and add: `tenant settings` (read proven live through BAP, see 4.7.3; command not built), `copilot settings`, `deploy`, `monitor`, `security settings`.
+4. Later, optional: interactive TUI layered on the same command core.
+
+## 9. Open questions
+
+- Package deploy: wrap `pac package deploy` as a dependency, or implement natively? **(verify)**
+- Which commands support service principals and which require a user token? Known so far: environment groups list works as a service principal; environments list returns 403 for a service principal but works for a signed-in admin (see 4.5.1 and 4.5.2).
+- Is `pac admin application register` required for service principals on `api.powerplatform.com`, or does the RBAC role assignment alone suffice?
+- Which preview API versions are stable enough to depend on? In use so far: environments `2024-10-01`, environment groups `2022-03-01-preview` (preview), copy and delete are labelled Preview in the reference.
+- Endpoint coverage for `monitor`, `deploy`, and `security settings`.
+- Distribution: the `dotnet tool` package builds and installs locally (see section 2). Still open: publishing to nuget.org (license, API key), a GitHub Releases pipeline, winget, Homebrew, an MSI, code signing, and which Entra app registration a shipped tool uses (a baked-in multi-tenant app ID or a guided `auth setup`).
+- Does `protectionLevel` `Standard` mean Managed? One data point agrees (Dev); verify against the admin center's Managed column.
+- The BAP API has no announced retirement, but Microsoft says its functionality is moving to newer Power Platform API versions. Watch for tenant settings and environment create on `api.powerplatform.com`.
+- Does BAP accept a service principal for tenant settings and environment create?
