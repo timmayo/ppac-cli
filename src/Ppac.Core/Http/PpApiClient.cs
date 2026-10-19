@@ -11,11 +11,13 @@ public interface ITokenProvider
     Task<string> GetTokenAsync(CancellationToken ct);
 }
 
-public sealed record ApiResponse(HttpStatusCode Status, string Body, JsonNode? Json);
+/// <summary>A successful response. Headers are case-insensitive and include content headers.</summary>
+public sealed record ApiResponse(HttpStatusCode Status, string Body, JsonNode? Json, IReadOnlyDictionary<string, string> Headers);
 
 /// <summary>
 /// Thin client for api.powerplatform.com: bearer auth, retry with backoff (honors Retry-After),
-/// OData paging, and mapping of HTTP failures to ppac exit codes.
+/// paging, and mapping of HTTP failures to ppac exit codes.
+/// Only requests that cannot have been processed are retried for writes (429); reads also retry 502/503/504.
 /// </summary>
 public sealed class PpApiClient
 {
@@ -59,6 +61,10 @@ public sealed class PpApiClient
             }
             catch (HttpRequestException ex)
             {
+                if (!IsSafe(method))
+                    throw new PpacException(ExitCodes.General,
+                        $"Network error: {ex.Message} The request may have reached the service; check the resource before retrying.",
+                        inner: ex);
                 if (attempt >= MaxAttempts)
                     throw new PpacException(ExitCodes.General, $"Network error: {ex.Message}", inner: ex);
                 await BackoffAsync(attempt, null, "network error", ct).ConfigureAwait(false);
@@ -66,7 +72,8 @@ public sealed class PpApiClient
             }
             catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
             {
-                throw new PpacException(ExitCodes.Timeout, "The request timed out.", inner: ex);
+                var hint = IsSafe(method) ? "" : " The request may have reached the service; check the resource before retrying.";
+                throw new PpacException(ExitCodes.Timeout, "The request timed out." + hint, inner: ex);
             }
 
             using (response)
@@ -75,9 +82,9 @@ public sealed class PpApiClient
                 _log?.Invoke($"{method} {url} -> {(int)response.StatusCode}");
 
                 if (response.IsSuccessStatusCode)
-                    return new ApiResponse(response.StatusCode, body, TryParse(body));
+                    return new ApiResponse(response.StatusCode, body, TryParse(body), CollectHeaders(response));
 
-                if (IsRetryable(response.StatusCode) && attempt < MaxAttempts)
+                if (IsRetryable(method, response.StatusCode) && attempt < MaxAttempts)
                 {
                     await BackoffAsync(attempt, response.Headers.RetryAfter, $"HTTP {(int)response.StatusCode}", ct)
                         .ConfigureAwait(false);
@@ -89,7 +96,7 @@ public sealed class PpApiClient
         }
     }
 
-    /// <summary>GETs a list endpoint and follows @odata.nextLink / nextLink until exhausted.</summary>
+    /// <summary>GETs a list endpoint that uses "value" and @odata.nextLink / nextLink.</summary>
     public async Task<List<JsonObject>> GetAllAsync(string path, CancellationToken ct = default)
     {
         var items = new List<JsonObject>();
@@ -117,6 +124,35 @@ public sealed class PpApiClient
         return items;
     }
 
+    /// <summary>GETs a list endpoint that uses "collection" and a continuationToken query parameter (backups, operations).</summary>
+    public async Task<List<JsonObject>> GetCollectionAsync(string path, CancellationToken ct = default)
+    {
+        var items = new List<JsonObject>();
+        string? continuation = null;
+
+        for (var page = 0; page < 1000; page++)
+        {
+            var url = continuation is null
+                ? path
+                : path + (path.Contains('?') ? "&" : "?") + "continuationToken=" + Uri.EscapeDataString(continuation);
+
+            var response = await SendAsync(HttpMethod.Get, url, null, ct).ConfigureAwait(false);
+            if (response.Json is not JsonObject obj) return items;
+
+            if (obj["collection"] is JsonArray array)
+                foreach (var node in array)
+                    if (node is JsonObject item)
+                        items.Add(item);
+
+            continuation = obj["continuationToken"] is JsonValue v && v.TryGetValue<string>(out var text) && !string.IsNullOrEmpty(text)
+                ? text
+                : null;
+            if (continuation is null) return items;
+        }
+
+        throw new PpacException(ExitCodes.General, "Paging did not finish after 1000 pages.");
+    }
+
     private static string ResolveUrl(string pathOrUrl)
     {
         // On Unix, "/foo" parses as an absolute file URI, so check the scheme before treating it as a URL.
@@ -133,9 +169,25 @@ public sealed class PpApiClient
         return BaseUrl + (pathOrUrl.StartsWith('/') ? "" : "/") + pathOrUrl;
     }
 
-    private static bool IsRetryable(HttpStatusCode status) =>
-        status is HttpStatusCode.TooManyRequests or HttpStatusCode.BadGateway
+    private static bool IsSafe(HttpMethod method) => method == HttpMethod.Get || method == HttpMethod.Head;
+
+    private static bool IsRetryable(HttpMethod method, HttpStatusCode status)
+    {
+        // 429 means the request was not processed, so retrying is safe for every method.
+        if (status == HttpStatusCode.TooManyRequests) return true;
+
+        // A 502/503/504 on a write may still have been processed (a second POST could create a duplicate).
+        return IsSafe(method) && status is HttpStatusCode.BadGateway
             or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout;
+    }
+
+    private static IReadOnlyDictionary<string, string> CollectHeaders(HttpResponseMessage response)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in response.Headers) headers[header.Key] = string.Join(", ", header.Value);
+        foreach (var header in response.Content.Headers) headers[header.Key] = string.Join(", ", header.Value);
+        return headers;
+    }
 
     private Task BackoffAsync(int attempt, RetryConditionHeaderValue? retryAfter, string reason, CancellationToken ct)
     {
@@ -166,7 +218,7 @@ public sealed class PpApiClient
         string? detail = null;
         if (TryParse(body) is JsonObject obj)
         {
-            var error = obj["error"] as JsonObject ?? obj;
+            var error = obj["error"] as JsonObject ?? obj["errorDetail"] as JsonObject ?? obj;
             detail = string.Join(": ", new[] { Text(error["code"]), Text(error["message"]) }
                 .Where(s => !string.IsNullOrEmpty(s)));
         }
