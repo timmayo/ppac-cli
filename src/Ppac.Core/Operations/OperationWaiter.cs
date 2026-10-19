@@ -79,8 +79,11 @@ public static class OperationWaiter
                 throw new PpacException(ExitCodes.Timeout,
                     $"Timed out after {timeout.TotalSeconds:0.#}s; the operation is still '{status}' and keeps running. Check it with: ppac op show");
 
-            log?.Invoke($"status: {(status.Length > 0 ? status : "unknown")}; checking again in {interval.TotalSeconds:0.#}s");
+            log?.Invoke($"status: {(status.Length > 0 ? status : "unknown")} ({FormatElapsed(now() - started)} elapsed); checking again in {interval.TotalSeconds:0.#}s");
             await delay(interval, ct).ConfigureAwait(false);
         }
     }
+
+    private static string FormatElapsed(TimeSpan elapsed) =>
+        elapsed.TotalMinutes >= 1 ? $"{(int)elapsed.TotalMinutes}m{elapsed.Seconds:00}s" : $"{(int)elapsed.TotalSeconds}s";
 }

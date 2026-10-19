@@ -34,7 +34,7 @@ public static class WriteHelpers
         new("--timeout") { Description = "With --wait: give up after this long, for example 30m (the operation keeps running)", DefaultValueFactory = _ => "30m" };
 
     public static Option<string> IntervalOption() =>
-        new("--interval") { Description = "With --wait: how often to check, for example 10s", DefaultValueFactory = _ => "10s" };
+        new("--interval") { Description = "With --wait: how often to check, for example 30s", DefaultValueFactory = _ => "30s" };
 
     public static Confirmation CreateConfirmation() =>
         new(Console.In, Console.Error, interactive: !Console.IsInputRedirected);

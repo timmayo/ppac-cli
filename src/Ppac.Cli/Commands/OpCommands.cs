@@ -79,8 +79,8 @@ public static class OpCommands
         };
         var interval = new Option<string>("--interval")
         {
-            Description = "How often to check, for example 10s",
-            DefaultValueFactory = _ => "10s",
+            Description = "How often to check, for example 30s",
+            DefaultValueFactory = _ => "30s",
         };
 
         var command = new Command("wait", "Wait for an operation to finish. Exits 0 on success, 8 if it failed, 9 on timeout.");
