@@ -221,6 +221,13 @@ public sealed class PpApiClient
             var error = obj["error"] as JsonObject ?? obj["errorDetail"] as JsonObject ?? obj;
             detail = string.Join(": ", new[] { Text(error["code"]), Text(error["message"]) }
                 .Where(s => !string.IsNullOrEmpty(s)));
+
+            // Some errors have no code or message, only errorDetail.fieldErrors.<key>.errorMessages.
+            if (string.IsNullOrEmpty(detail) || Text(error["message"]) is null)
+            {
+                var fromFields = Operations.OperationStatus.ErrorText(error);
+                if (fromFields.Length > 0) detail = fromFields;
+            }
         }
 
         var message = $"HTTP {(int)status} {status}" + (string.IsNullOrEmpty(detail) ? "" : $" - {detail}");

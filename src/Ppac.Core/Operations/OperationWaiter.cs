@@ -16,8 +16,8 @@ public static class OperationStatus
 
     /// <summary>
     /// Error text for a failed operation, formatted as " (Code: message)" or "" when there is none.
-    /// A live Create operation put the error on the failed entry of stageStatuses (errorDetail.code plus
-    /// fieldErrors.&lt;code&gt;.errorMessages), not at the top level, so look there first, then at the top level.
+    /// A live Create operation put the error on the failed entry of stageStatuses, not at the top level, so look
+    /// there first, then at the top level. See <see cref="ErrorText"/> for the shapes of the error itself.
     /// </summary>
     public static string FailureDetail(JsonObject operation)
     {
@@ -33,15 +33,35 @@ public static class OperationStatus
                 }
 
         detail ??= operation["errorDetail"] as JsonObject;
-        if (detail is null) return "";
+        var text = detail is null ? "" : ErrorText(detail);
+        return text.Length > 0 ? $" ({text})" : "";
+    }
 
-        var code = OutputWriter.CellText(detail, "code");
-        string message = "";
-        if (code.Length > 0 && detail["fieldErrors"]?[code]?["errorMessages"] is JsonArray messages)
-            message = string.Join(" ", messages.Select(m => m?.GetValue<string>()).Where(m => !string.IsNullOrEmpty(m)));
+    /// <summary>
+    /// Text for an errorDetail object: "Code: message", "Code", or "Key: message" when there is no code.
+    /// Live responses showed two shapes: a code with messages under fieldErrors.&lt;code&gt;.errorMessages
+    /// (a failed Create), and no code at all with messages under fieldErrors.&lt;key&gt;.errorMessages
+    /// (a refused copy: key InvalidLifecycleOperationRequest).
+    /// </summary>
+    public static string ErrorText(JsonObject errorDetail)
+    {
+        var code = OutputWriter.CellText(errorDetail, "code");
+        var label = code;
+        var messages = new List<string>();
 
-        if (code.Length == 0 && message.Length == 0) return "";
-        return " (" + (message.Length > 0 ? $"{code}: {message}" : code) + ")";
+        if (errorDetail["fieldErrors"] is JsonObject fields)
+            foreach (var (key, value) in fields)
+            {
+                if (value?["errorMessages"] is not JsonArray list) continue;
+                if (label.Length == 0) label = key;
+                foreach (var item in list)
+                    if (item is JsonValue v && v.TryGetValue<string>(out var text) && !string.IsNullOrEmpty(text))
+                        messages.Add(text);
+            }
+
+        var message = string.Join(" ", messages);
+        if (label.Length == 0) return message;
+        return message.Length > 0 ? $"{label}: {message}" : label;
     }
 }
 
