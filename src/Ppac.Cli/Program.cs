@@ -8,6 +8,8 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        args = DefaultCommands.Apply(args, Console.Error);
+
         var root = new RootCommand("ppac - one-stop CLI for Power Platform admins");
         root.Options.Add(GlobalOptions.Output);
         root.Options.Add(GlobalOptions.Verbose);
@@ -18,6 +20,11 @@ public static class Program
         root.Subcommands.Add(OpCommands.Create());
         root.Subcommands.Add(InventoryCommands.Create());
         root.Subcommands.Add(ApiCommand.Create());
+
+        if (Banner.ShouldShow(args)) Banner.Write(Console.Error);
+
+        // A bare "ppac" shows help (exit 0) instead of a "command required" error.
+        if (args.Length == 0) return await root.Parse(["--help"]).InvokeAsync();
 
         var parse = root.Parse(args);
 

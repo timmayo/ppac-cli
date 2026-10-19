@@ -56,9 +56,14 @@ ppac inventory list                                  # first 100 items, newest f
 ppac inventory list --type flow --all                # every cloud and agent flow
 ppac inventory list --type canvas-app --env "Dev"    # one environment (ID or display name)
 ppac inventory list --owner <user-object-id> -o csv
+ppac inventory show <item-id>                        # one item: details, environment, activity, connectors, last used
 ```
 
-`--type` is one of `app`, `canvas-app`, `model-driven-app`, `code-app`, `flow`, `cloud-flow`, `agent-flow`, `agent`. The owner is shown as an object ID, because the service returns no display name. `-o json` gives one flat object per item with `connectors` as a comma-separated string.
+`--type` is one of `app`, `canvas-app`, `model-driven-app`, `code-app`, `flow`, `cloud-flow`, `agent-flow`, `agent`. The owner is shown as an object ID, because the service returns no display name. `-o json` gives one flat object per item with `connectors` as a comma-separated string. `inventory show` groups one item into item, environment, activity and connectors; `lastUsed` is empty when the item has no usage record.
+
+## Shortcuts
+
+A command group typed without a subcommand runs its list: `ppac env` is `ppac env list`, and likewise for `group`, `inventory` and `auth`. Options still apply, so `ppac env -o json` works. `ppac op` and `ppac env backup` need an environment, so they show their help instead. A bare `ppac` shows the banner and the top-level help.
 
 ## Single-file executable
 
