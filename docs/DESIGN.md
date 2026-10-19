@@ -187,6 +187,36 @@ Token cache: encrypted by the OS on Windows (DPAPI) and macOS (Keychain). On Lin
 - `--no-wait` returns immediately and prints the operation ID.
 - `ppac op show <id>` reports status. `ppac op wait <id>` blocks until done and exits 0 or 8.
 
+#### 4.7.1 Environment lifecycle (from Microsoft's reference, api-version 2024-10-01)
+
+Status: `env delete` and the operation commands are verified against the live service (delegated sign-in, 2026-10-19). `env copy` and the backup commands are built and unit-tested but not yet run live.
+
+| Command | Request | Notes |
+|---|---|---|
+| `env delete` | `DELETE /environmentmanagement/environments/{id}` | Live: returns 202 with an empty body and no `Operation-Location` header; the operation URL is in the `Location` header (`.../operations/{operationId}?api-version=1`). `ValidateOnly=true` for `--whatif` was honored: the environment was unchanged and no operation was created. `--wait` follows the operation to the end. |
+| `env copy` | `POST /environmentmanagement/environments/{targetId}/copy` | Body `copyType` (Minimal or Full), `sourceEnvironmentId`, optional `copyOptions`. The target is overwritten. Returns 202. `ValidateOnly` documented. Marked Preview. |
+| `env backup create` | `POST .../environments/{id}/backups` | Body `label`. Returns 201 with the backup, so it is synchronous. No `ValidateOnly`, so `--whatif` is a local dry run. |
+| `env backup list` / `delete` | `GET .../backups`, `DELETE .../backups/{backupId}` | Delete returns 204. |
+| `op list` / `show` / `wait` | `GET .../environments/{id}/operations[/{operationId}]` | Live: statuses seen are Queued, InProgress, Succeeded, Failed. The service keeps an environment's operations after the environment is deleted, so a GUID is used without looking the environment up. Documented but not yet seen: ValidationFailed, NoOperation, ValidationPassed. |
+
+Safety rules (implemented and unit-tested):
+- Destructive commands need `--yes` when not interactive (exit 2). Interactive runs must type the exact resource name.
+- `--whatif` never changes anything: delete and copy use `ValidateOnly=true`; backup commands only print what they would do.
+- Writes are never retried on 502/503/504 or network errors, because the request may have been processed. 429 is retried for every method.
+
+Observed behavior (live, 2026-10-19):
+- A failed operation carries its error on the failed entry of `stageStatuses` (`errorDetail.code` plus `fieldErrors.<code>.errorMessages`), not at the top level. A Create failed with `CrmProvisioningFailedForExistingEnvironment` ("The CDS 2.0 provisioning operation failed due to an internal server error") after about 17 minutes. While a later stage was still running, the operation showed `InProgress`.
+- Deleting a sandbox with no Dataverse database took about 2 minutes 26 seconds, so a 2-minute `--timeout` is too short for a delete. Default polling is every 30 seconds.
+- A failed create left the environment in `env list` intermittently (present in one call, absent in the next), and a direct `GET` of it returned 404. A direct `GET` of a healthy environment works, so a GUID is fetched directly rather than found through the list.
+- An environment with no Dataverse database is created immediately and its operations list is empty.
+
+Open items:
+- `ValidateOnly` is verified for delete only. It is not yet verified for copy.
+- `NoOperation` and `ValidationPassed` are treated as finished successfully, which is an assumption.
+- I found no create-environment operation in this API. `pac admin create` uses the older BAP API. `env create` is deferred pending a decision on using BAP.
+- Restore (`Restore Environment`, `Get Restore Candidates`) and copy candidates exist in the reference and are not built yet.
+- Backup columns (label, backupPointDateTime, backupExpiryDateTime, id) come from the reference; Dev had no backups, so they are not yet checked against live output.
+
 ### 4.8 Composability
 - Resources accept a name or GUID. An ambiguous name fails with exit 2 and lists candidates on stderr.
 - `-q, --id-only` prints one identifier per line, for `xargs` and loops.
@@ -249,6 +279,6 @@ if ($LASTEXITCODE -eq 3) { throw "Not authenticated" }
 - Package deploy: wrap `pac package deploy` as a dependency, or implement natively? **(verify)**
 - Which commands support service principals and which require a user token? Known so far: environment groups list works as a service principal; environments list returns 403 for a service principal but works for a signed-in admin (see 4.5.1 and 4.5.2).
 - Is `pac admin application register` required for service principals on `api.powerplatform.com`, or does the RBAC role assignment alone suffice?
-- Which preview API versions are stable enough to depend on?
+- Which preview API versions are stable enough to depend on? In use so far: environments `2024-10-01`, environment groups `2022-03-01-preview` (preview), copy and delete are labelled Preview in the reference.
 - Endpoint coverage for `monitor`, `deploy`, and `security settings`.
 - Distribution: GitHub Releases, winget, Homebrew, `dotnet tool`.
