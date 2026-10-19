@@ -60,14 +60,21 @@ public static class EnvCommands
         var environment = new Argument<string>("environment") { Description = "Environment ID, or its exact display name" };
         var yes = WriteHelpers.YesOption();
         var whatIf = WriteHelpers.WhatIfOption();
+        var wait = WriteHelpers.WaitOption();
+        var timeout = WriteHelpers.TimeoutOption();
+        var interval = WriteHelpers.IntervalOption();
 
         var command = new Command("delete", "Delete an environment. Asks you to type its name; scripts must pass --yes.");
         command.Arguments.Add(environment);
         command.Options.Add(yes);
         command.Options.Add(whatIf);
+        command.Options.Add(wait);
+        command.Options.Add(timeout);
+        command.Options.Add(interval);
         command.SetAction((parse, ct) => CommandRunner.RunAsync(parse, async token =>
         {
             var format = GlobalOptions.Format(parse);
+            var waitSettings = WriteHelpers.ParseWait(parse, wait, timeout, interval);
             var client = CommandRunner.CreateClient(parse);
             var env = await WriteHelpers.ResolveEnvironmentAsync(client, parse.GetValue(environment)!, token);
             var path = WriteHelpers.EnvPath(env.Id);
@@ -83,7 +90,9 @@ public static class EnvCommands
             WriteHelpers.CreateConfirmation().Require($"delete environment '{env.Name}' ({env.Id})", env.Name, parse.GetValue(yes));
 
             var response = await client.SendAsync(HttpMethod.Delete, $"{path}?{WriteHelpers.ApiVersion}", null, token);
-            WriteHelpers.WriteAccepted(parse, "delete", env, response, format);
+            var operationId = WriteHelpers.WriteAccepted(parse, "delete", env, response, format, quiet: waitSettings is not null);
+            if (waitSettings is not null)
+                await WriteHelpers.WaitAfterAcceptedAsync(client, env, operationId, waitSettings, format, token);
             return ExitCodes.Ok;
         }, ct));
         return command;
@@ -99,6 +108,9 @@ public static class EnvCommands
         var securityGroup = new Option<string>("--security-group-override") { Description = "Security group ID to set on the target" };
         var yes = WriteHelpers.YesOption();
         var whatIf = WriteHelpers.WhatIfOption();
+        var wait = WriteHelpers.WaitOption();
+        var timeout = WriteHelpers.TimeoutOption();
+        var interval = WriteHelpers.IntervalOption();
 
         var command = new Command("copy", "Copy one environment over another (the target is overwritten).");
         command.Options.Add(from);
@@ -109,9 +121,13 @@ public static class EnvCommands
         command.Options.Add(securityGroup);
         command.Options.Add(yes);
         command.Options.Add(whatIf);
+        command.Options.Add(wait);
+        command.Options.Add(timeout);
+        command.Options.Add(interval);
         command.SetAction((parse, ct) => CommandRunner.RunAsync(parse, async token =>
         {
             var format = GlobalOptions.Format(parse);
+            var waitSettings = WriteHelpers.ParseWait(parse, wait, timeout, interval);
             var fromText = parse.GetValue(from);
             var toText = parse.GetValue(to);
             var typeText = parse.GetValue(type);
@@ -153,7 +169,9 @@ public static class EnvCommands
                 $"{description}. The target environment will be overwritten", target.Name, parse.GetValue(yes));
 
             var response = await client.SendAsync(HttpMethod.Post, $"{path}?{WriteHelpers.ApiVersion}", body.ToJsonString(), token);
-            WriteHelpers.WriteAccepted(parse, "copy", target, response, format);
+            var operationId = WriteHelpers.WriteAccepted(parse, "copy", target, response, format, quiet: waitSettings is not null);
+            if (waitSettings is not null)
+                await WriteHelpers.WaitAfterAcceptedAsync(client, target, operationId, waitSettings, format, token);
             return ExitCodes.Ok;
         }, ct));
         return command;
