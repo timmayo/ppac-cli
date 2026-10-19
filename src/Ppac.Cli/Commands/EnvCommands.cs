@@ -159,9 +159,10 @@ public static class EnvCommands
 
             if (parse.GetValue(whatIf))
             {
-                var check = await client.SendAsync(HttpMethod.Post,
-                    $"{path}?ValidateOnly=true&{WriteHelpers.ApiVersion}", body.ToJsonString(), token);
-                WriteHelpers.ReportValidation(check, description, $"ppac op list {target.Id}");
+                // The service does not honor ValidateOnly on copy: a live validation-only request returned 202 and
+                // started a real Copy operation. So --whatif for copy sends nothing and only reports what it resolved.
+                Console.Error.WriteLine($"Nothing was sent. Would {description}.");
+                Console.Error.WriteLine("The service cannot validate a copy without running it, so the request itself was not checked.");
                 return ExitCodes.Ok;
             }
 
