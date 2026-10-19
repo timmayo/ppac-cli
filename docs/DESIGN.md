@@ -205,7 +205,7 @@ Decisions: secrets are never stored in profiles (env var or flag only); deleting
 
 #### 4.7.1 Environment lifecycle (from Microsoft's reference, api-version 2024-10-01)
 
-Status: `env delete` and the operation commands are verified against the live service (delegated sign-in, 2026-10-19). The backup commands are verified live too. `env copy` has been run live once (see below) but its outcome is still being observed, so treat it as experimental. `--whatif` on copy is local only.
+Status: `env delete` and the operation commands are verified against the live service (delegated sign-in, 2026-10-19). The backup commands are verified live too. `env copy` has been run live once and finished `Succeeded` (see below), but only one successful run has been observed, so treat it as lightly tested. `--whatif` on copy is local only.
 
 | Command | Request | Notes |
 |---|---|---|
@@ -228,6 +228,7 @@ Observed behavior (live, 2026-10-19):
 - Copy is refused (HTTP 400, validation only) if either environment has no Dataverse: `InvalidLifecycleOperationRequest: The environment ... is not linked to a new CDS 2.0 instance. The following operation is forbidden for unlinked environments: 'CopyFromEnvironment'`.
 - Copy is refused (HTTP 400) if governance differs: `EnvironmentGovernanceConfigurationCopyError: The governance configuration properties of the target and source environments must match to perform a copy.` The only governance-looking field that differed between the two records was `protectionLevel` (`Standard` vs `Basic`); that this is the cause is not confirmed.
 - Errors can have no `code` or `message`, only `errorDetail.fieldErrors.<key>.errorMessages`; the reason is read from there.
+- A Minimal copy between two sandboxes with Dataverse (ppac-test onto ppac-test2) finished `Succeeded` in 28 minutes 17 seconds: Validate and Prepare under 1 minute, Run about 27 minutes, Finalize about 13 seconds. Use a `--timeout` of at least 45 minutes for copies. The finished operation reports the target in `updatedEnvironment.environmentId`.
 - Restoring a deleted environment keeps its ID and records a `Recover` operation.
 
 Open items:
