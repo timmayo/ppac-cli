@@ -54,6 +54,15 @@ public static class WriteHelpers
         return new WaitSettings(pollEvery, giveUpAfter);
     }
 
+    /// <summary>
+    /// Environment ID for commands that only need the ID (operations). A GUID is used as given, with no request,
+    /// because the service keeps an environment's operations after the environment is deleted.
+    /// </summary>
+    public static async Task<string> ResolveEnvironmentIdAsync(PpApiClient client, string idOrName, CancellationToken ct) =>
+        Guid.TryParse(idOrName.Trim(), out var guid)
+            ? guid.ToString()
+            : (await ResolveEnvironmentAsync(client, idOrName, ct)).Id;
+
     public static async Task<ResolvedEnvironment> ResolveEnvironmentAsync(PpApiClient client, string idOrName, CancellationToken ct)
     {
         // A GUID is fetched directly. Live runs showed the list can omit an environment from one call to the

@@ -35,9 +35,9 @@ public static class OpCommands
         {
             var format = GlobalOptions.Format(parse);
             var client = CommandRunner.CreateClient(parse);
-            var env = await WriteHelpers.ResolveEnvironmentAsync(client, parse.GetValue(environment)!, token);
+            var envId = await WriteHelpers.ResolveEnvironmentIdAsync(client, parse.GetValue(environment)!, token);
 
-            var rows = await client.GetCollectionAsync(OperationsPath(env.Id), token);
+            var rows = await client.GetCollectionAsync(OperationsPath(envId), token);
             OutputWriter.Write(Console.Out, rows, Columns.Operations, format);
             return ExitCodes.Ok;
         }, ct));
@@ -56,9 +56,9 @@ public static class OpCommands
         {
             var format = GlobalOptions.Format(parse);
             var client = CommandRunner.CreateClient(parse);
-            var env = await WriteHelpers.ResolveEnvironmentAsync(client, parse.GetValue(environment)!, token);
+            var envId = await WriteHelpers.ResolveEnvironmentIdAsync(client, parse.GetValue(environment)!, token);
 
-            var response = await client.SendAsync(HttpMethod.Get, OperationPath(env.Id, parse.GetValue(operationId)!.Trim()), null, token);
+            var response = await client.SendAsync(HttpMethod.Get, OperationPath(envId, parse.GetValue(operationId)!.Trim()), null, token);
             if (response.Json is not JsonObject operation)
                 throw new PpacException(ExitCodes.General, "The service returned an empty response for the operation.");
 
@@ -97,8 +97,8 @@ public static class OpCommands
                 throw new PpacException(ExitCodes.Usage, "--interval must be greater than zero.");
 
             var client = CommandRunner.CreateClient(parse);
-            var env = await WriteHelpers.ResolveEnvironmentAsync(client, parse.GetValue(environment)!, token);
-            var path = OperationPath(env.Id, parse.GetValue(operationId)!.Trim());
+            var envId = await WriteHelpers.ResolveEnvironmentIdAsync(client, parse.GetValue(environment)!, token);
+            var path = OperationPath(envId, parse.GetValue(operationId)!.Trim());
 
             var final = await OperationWaiter.WaitAsync(
                 async t =>
