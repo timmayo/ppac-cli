@@ -16,6 +16,7 @@ public static class Program
         root.Subcommands.Add(EnvCommands.Create());
         root.Subcommands.Add(GroupCommands.Create());
         root.Subcommands.Add(OpCommands.Create());
+        root.Subcommands.Add(InventoryCommands.Create());
         root.Subcommands.Add(ApiCommand.Create());
 
         var parse = root.Parse(args);

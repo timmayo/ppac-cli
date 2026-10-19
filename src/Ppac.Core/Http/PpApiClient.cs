@@ -40,10 +40,15 @@ public sealed class PpApiClient
         _log = log;
     }
 
+    /// <summary>
+    /// Sends one request. Set readOnly for a POST that only reads (a query): it is then retried on network errors
+    /// and 502/503/504 like a GET, because repeating it cannot change anything.
+    /// </summary>
     public async Task<ApiResponse> SendAsync(HttpMethod method, string pathOrUrl, string? jsonBody = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool readOnly = false)
     {
         var url = ResolveUrl(pathOrUrl);
+        var safe = readOnly || IsSafe(method);
 
         for (var attempt = 1; ; attempt++)
         {
@@ -61,7 +66,7 @@ public sealed class PpApiClient
             }
             catch (HttpRequestException ex)
             {
-                if (!IsSafe(method))
+                if (!safe)
                     throw new PpacException(ExitCodes.General,
                         $"Network error: {ex.Message} The request may have reached the service; check the resource before retrying.",
                         inner: ex);
@@ -72,7 +77,7 @@ public sealed class PpApiClient
             }
             catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
             {
-                var hint = IsSafe(method) ? "" : " The request may have reached the service; check the resource before retrying.";
+                var hint = safe ? "" : " The request may have reached the service; check the resource before retrying.";
                 throw new PpacException(ExitCodes.Timeout, "The request timed out." + hint, inner: ex);
             }
 
@@ -84,7 +89,7 @@ public sealed class PpApiClient
                 if (response.IsSuccessStatusCode)
                     return new ApiResponse(response.StatusCode, body, TryParse(body), CollectHeaders(response));
 
-                if (IsRetryable(method, response.StatusCode) && attempt < MaxAttempts)
+                if (IsRetryable(safe, response.StatusCode) && attempt < MaxAttempts)
                 {
                     await BackoffAsync(attempt, response.Headers.RetryAfter, $"HTTP {(int)response.StatusCode}", ct)
                         .ConfigureAwait(false);
@@ -171,13 +176,13 @@ public sealed class PpApiClient
 
     private static bool IsSafe(HttpMethod method) => method == HttpMethod.Get || method == HttpMethod.Head;
 
-    private static bool IsRetryable(HttpMethod method, HttpStatusCode status)
+    private static bool IsRetryable(bool safe, HttpStatusCode status)
     {
         // 429 means the request was not processed, so retrying is safe for every method.
         if (status == HttpStatusCode.TooManyRequests) return true;
 
         // A 502/503/504 on a write may still have been processed (a second POST could create a duplicate).
-        return IsSafe(method) && status is HttpStatusCode.BadGateway
+        return safe && status is HttpStatusCode.BadGateway
             or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout;
     }
 

@@ -39,6 +39,20 @@ public static class Columns
         new("OperationId", "operationId"),
     ];
 
+    /// <summary>Columns of the flattened inventory rows built by InventoryQuery.Flatten.</summary>
+    public static readonly IReadOnlyList<Column> Inventory =
+    [
+        new("Name", "displayName"),
+        new("Type", "type"),
+        new("Owner", "ownerId"),
+        new("Modified", "lastModifiedAt"),
+        new("Environment", "environmentName"),
+        new("EnvType", "environmentType"),
+        new("Status", "status"),
+        new("Connectors", "connectors"),
+        new("Id", "id"),
+    ];
+
     /// <summary>Two-column view used when a single object is shown as a table, CSV or TSV.</summary>
     public static readonly IReadOnlyList<Column> Properties =
     [

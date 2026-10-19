@@ -237,68 +237,17 @@ Open items:
 - I found no create-environment operation in this API. `pac admin create` uses the older BAP API. `env create` is deferred pending a decision on using BAP.
 - Restore (`Restore Environment`, `Get Restore Candidates`) and copy candidates exist in the reference and are not built yet.
 
-### 4.8 Composability
-- Resources accept a name or GUID. An ambiguous name fails with exit 2 and lists candidates on stderr.
-- `-q, --id-only` prints one identifier per line, for `xargs` and loops.
-- Targeting: `--env <name|id>`. Default from `ppac config set default.env <name>`. Flag > env var (`PPAC_ENV`) > config file > built-in default.
-- Commands that take tenant-wide scope do not require `--env`. Environment-scoped commands (solution, package) always do.
+#### 4.7.2 Inventory (`ppac inventory list`)
 
-### 4.9 Resilience
-- Retry transient failures (429, 5xx) with exponential backoff and jitter, honoring `Retry-After`.
-- `--max-retries <n>` (default 5) and `--concurrency <n>` for bulk operations.
-- Known service limit to respect: the Power Platform for Admins V2 connector documents 100 calls per 60 seconds per connection. **(verify limits for the REST API directly)**
+Source: Microsoft's inventory API page (`POST /resourcequery/resources/query?api-version=2024-10-01`), checked against live output on 2026-10-19.
 
-### 4.10 Escape hatch
-`ppac api <METHOD> <path> [--body <json|@file>] [--api-version <v>]` makes an authenticated call and prints the response body to stdout. This keeps users unblocked when a typed command does not exist or an endpoint is still in preview.
-
-## 5. CLI conventions
-
-- Noun-verb structure, kebab-case long flags, short flags only for the most common (`-o`, `-q`, `-h`).
-- `--help` on every command and group, with at least one real example.
-- `--version`; `ppac completion bash|zsh|powershell` for shell completion.
-- `--verbose` (request summaries) and `--debug` (full detail, secrets redacted), both to stderr.
-- Config file at the standard per-OS config location. Environment variables prefixed `PPAC_`.
-- Semantic versioning. Contract changes (output shape, exit codes, flag removal) only in major versions, with a deprecation period and a stderr warning first.
-- Preview/beta API usage is flagged in `--help` and in verbose output, since those endpoints can change.
-
-## 6. Examples
-
-```bash
-# Delete inactive sandbox environments (dry run first)
-ppac env list --type sandbox -o json \
-  | jq -r '.[] | select(.lastActivity < "2026-07-01") | .id' \
-  | xargs -I{} ppac env delete {} --whatif
-
-# Export a solution from Dev and import it to Test, non-interactive
-ppac solution export MySolution --env Dev --managed --out ./MySolution.zip
-ppac solution import ./MySolution.zip --env Test --yes --timeout 30m
-```
-
-```powershell
-$envs = ppac env list -o json | ConvertFrom-Json
-if ($LASTEXITCODE -eq 3) { throw "Not authenticated" }
-```
-
-## 7. Testing
-
-- Golden-file tests for JSON output of every command (guards the contract).
-- Exit code tests for each documented code.
-- Non-interactive behavior tests (no TTY, no prompts, `--yes` required).
-- Recorded-response tests for API calls. A live smoke suite against a dev tenant, run manually.
-- Contract tests fail the build on any unannounced shape change.
-
-## 8. Phased plan
-
-1. Foundation: auth, config, output formatting, exit codes, retry, `api`, `op`. **Status:** done and tested for signed-in admin auth (`auth create|list|select|delete|clear|name|who|token|logout`, named profiles), output formats, exit codes, retry and paging, `api`, `env list|show|delete|copy|backup`, `op list|show|wait`. Remaining: service principal, certificate, managed identity and federated auth (`auth create` options, `auth setup`).
-2. Confirmed groups: `env`, `group`, `inventory`, `dlp`, `solution`, `package`, `security recommendations`, `license` (billing plans, capacity).
-3. Verify and add: `tenant settings`, `copilot settings`, `deploy`, `monitor`, `security settings`.
-4. Later, optional: interactive TUI layered on the same command core.
-
-## 9. Open questions
-
-- Package deploy: wrap `pac package deploy` as a dependency, or implement natively? **(verify)**
-- Which commands support service principals and which require a user token? Known so far: environment groups list works as a service principal; environments list returns 403 for a service principal but works for a signed-in admin (see 4.5.1 and 4.5.2).
-- Is `pac admin application register` required for service principals on `api.powerplatform.com`, or does the RBAC role assignment alone suffice?
-- Which preview API versions are stable enough to depend on? In use so far: environments `2024-10-01`, environment groups `2022-03-01-preview` (preview), copy and delete are labelled Preview in the reference.
-- Endpoint coverage for `monitor`, `deploy`, and `security settings`.
-- Distribution: GitHub Releases, winget, Homebrew, `dotnet tool`.
+- A structured query (`TableName` `PowerPlatformResources`, `Clauses`, `Options` with `Top`, `Skip`, `SkipToken`) that the service runs against Azure Resource Graph. It is a read-only POST, so the client retries it on 502/503/504 and network errors like a GET.
+- Delegated user sign-in only. Per Microsoft's page a service principal or managed identity gets 403. (Not tested live with a service principal.)
+- The table holds more than apps and flows: the demo tenant returned connectors (1805), usage records (164), environments, environment groups and others, so the command always filters on `type` with `in~`. Types seen live: cloud flows (384), canvas apps (176), model-driven apps (94), Copilot Studio agents (18), code apps (2), agent flows (1).
+- Live row: `name` (the item ID), `type`, `location`, `tenantId` and a `properties` bag with `displayName`, `environmentId`, `ownerId`, `createdAt`, `lastModifiedAt`, `powerPlatformConnectors[].connectorId`, and `status` (flows) or `isQuarantined` (apps). Owner is an object ID only. The admin center shows a name, which this API does not return.
+- Paging: the response carries `skipToken`, which is `null` on the last page. Send `Options.Top` and `Options.SkipToken` for the next page, and no `Skip`. Live: `Skip: 0` together with a `SkipToken` made the service return page 1 again with the same token, so a loop that follows the token never ended. The client sends no `Skip` and stops with an error if a token repeats. `resultTruncated` was `1` both on a partial page and on a complete one, so it is ignored. Documentation for `resultTruncated` (0 = truncated) contradicts this.
+- `totalRecords` for the all-types query was 674 while `--all` returned 675 rows (the type counts add up to 675). Per-type totals matched (176 canvas apps, 385 flows). Treat `totalRecords` as approximate.
+- One paged run (`--page-size 50`) returned 674 rows against 675 for a single page. A repeat comparison returned identical row sets with no duplicates, so the cause is unknown and probably a change between calls. 18 rows have no `lastModifiedAt` and tie in the sort, and the service gives no stable order among ties. A secondary `orderby name` would fix that, but was not tested. If a mismatch recurs, test it.
+- Polymorphic clauses need `$type` as the first property of each clause object. Building the body with PowerShell hashtables put it in a random position and the service answered 400; use `[ordered]` or a JSON string.
+- The environment name and type come from the environment list, matched on `environmentId`.
+- Verified live: `orderby tostring(properties.lastModifiedAt) desc` (newest first), `orderby name asc`, paging by `SkipToken` (page sizes 1000 and 50), the `in~` filters on `properties.environmentId` (`--env`) and `properties.ownerId` (`--owner`), and the environment name and type lookup. Not yet checked: whether `Default-<guid>`

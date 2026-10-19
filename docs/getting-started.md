@@ -47,6 +47,19 @@ ppac env list --profile personal                              # use another prof
 
 `auth login` and `auth status` remain as aliases of `create` and `who`. Re-running `create` with an existing name signs in again and reuses its tenant and client ID.
 
+## Inventory
+
+Lists apps, flows and Copilot Studio agents across the tenant (the admin center's Maker inventory page). It needs a signed-in admin: the service refuses service principals.
+
+```powershell
+ppac inventory list                                  # first 100 items, newest first
+ppac inventory list --type flow --all                # every cloud and agent flow
+ppac inventory list --type canvas-app --env "Dev"    # one environment (ID or display name)
+ppac inventory list --owner <user-object-id> -o csv
+```
+
+`--type` is one of `app`, `canvas-app`, `model-driven-app`, `code-app`, `flow`, `cloud-flow`, `agent-flow`, `agent`. The owner is shown as an object ID, because the service returns no display name. `-o json` gives one flat object per item with `connectors` as a comma-separated string.
+
 ## Single-file executable
 
 ```powershell
