@@ -22,8 +22,7 @@ public static class EnvCommands
             var rows = await CommandRunner.CreateClient(parse)
                 .GetAllAsync("/environmentmanagement/environments?api-version=2024-10-01", token);
 
-            OutputWriter.Write(Console.Out, rows,
-                [new("Name", "name"), new("DisplayName", "properties.displayName")], format);
+            OutputWriter.Write(Console.Out, rows, Columns.Environments, format);
             return ExitCodes.Ok;
         }, ct));
         return command;
