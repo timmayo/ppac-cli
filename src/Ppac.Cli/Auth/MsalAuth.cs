@@ -68,6 +68,42 @@ public sealed class MsalAuth : ITokenProvider
 
     public async Task<string> GetTokenAsync(CancellationToken ct) => (await AcquireSilentAsync(ct)).AccessToken;
 
+    /// <summary>
+    /// A token for another resource (for example the legacy BAP admin API), using the same sign-in. Silent first;
+    /// if the app has not been granted that resource yet, one browser prompt asks for consent. Probe use only.
+    /// </summary>
+    public async Task<string> GetTokenForScopeAsync(string scope, Action<string> showMessage, CancellationToken ct)
+    {
+        var app = await GetAppAsync();
+        var accounts = (await app.GetAccountsAsync()).ToList();
+        var account = accounts.FirstOrDefault(a =>
+                          string.Equals(a.Username, _profile.Username, StringComparison.OrdinalIgnoreCase))
+                      ?? accounts.FirstOrDefault();
+        if (account is null) throw NotSignedIn();
+
+        string[] scopes = [scope];
+        try
+        {
+            return (await app.AcquireTokenSilent(scopes, account).ExecuteAsync(ct)).AccessToken;
+        }
+        catch (MsalUiRequiredException)
+        {
+            showMessage("Consent for this resource is needed. Opening the browser.");
+            try
+            {
+                return (await app.AcquireTokenInteractive(scopes).WithAccount(account).ExecuteAsync(ct)).AccessToken;
+            }
+            catch (MsalException ex)
+            {
+                throw new PpacException(ExitCodes.Auth, $"Could not get a token for {scope}: {ex.Message}", ex.ToString(), ex);
+            }
+        }
+        catch (MsalException ex)
+        {
+            throw new PpacException(ExitCodes.Auth, $"Could not get a token for {scope}: {ex.Message}", ex.ToString(), ex);
+        }
+    }
+
     public async Task LogoutAsync()
     {
         // Only this profile's account: other profiles may share the same app registration and token cache.

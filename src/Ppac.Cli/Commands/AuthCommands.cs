@@ -216,11 +216,20 @@ public static class AuthCommands
 
     private static Command Token()
     {
+        var scope = new Option<string>("--scope")
+        {
+            Description = "Token for another resource instead, such as https://service.powerapps.com//.default (may open one browser consent prompt)",
+        };
         var command = new Command("token", "Print a Power Platform API access token for the active profile (a secret: do not share or log it)");
+        command.Options.Add(scope);
         command.SetAction((parse, ct) => CommandRunner.RunAsync(parse, async token =>
         {
             var profile = new ProfileStore().Resolve(null, null, Environment.GetEnvironmentVariable, parse.GetValue(GlobalOptions.Profile));
-            Console.Out.WriteLine(await new MsalAuth(profile).GetTokenAsync(token));
+            var auth = new MsalAuth(profile);
+            var other = parse.GetValue(scope);
+            Console.Out.WriteLine(string.IsNullOrWhiteSpace(other)
+                ? await auth.GetTokenAsync(token)
+                : await auth.GetTokenForScopeAsync(other.Trim(), Console.Error.WriteLine, token));
             return ExitCodes.Ok;
         }, ct));
         return command;
