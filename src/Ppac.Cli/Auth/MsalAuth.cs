@@ -70,13 +70,17 @@ public sealed class MsalAuth : ITokenProvider
 
     public async Task LogoutAsync()
     {
+        // Only this profile's account: other profiles may share the same app registration and token cache.
+        if (string.IsNullOrEmpty(_profile.Username)) return;
+
         var app = await GetAppAsync();
         foreach (var account in await app.GetAccountsAsync())
-            await app.RemoveAsync(account);
+            if (string.Equals(account.Username, _profile.Username, StringComparison.OrdinalIgnoreCase))
+                await app.RemoveAsync(account);
     }
 
     private static PpacException NotSignedIn() =>
-        new(ExitCodes.Auth, "Not signed in, or the session expired. Run: ppac auth login");
+        new(ExitCodes.Auth, "Not signed in, or the session expired. Run: ppac auth create");
 
     private async Task<IPublicClientApplication> GetAppAsync()
     {

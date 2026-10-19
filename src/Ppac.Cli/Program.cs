@@ -11,6 +11,7 @@ public static class Program
         var root = new RootCommand("ppac - one-stop CLI for Power Platform admins");
         root.Options.Add(GlobalOptions.Output);
         root.Options.Add(GlobalOptions.Verbose);
+        root.Options.Add(GlobalOptions.Profile);
         root.Subcommands.Add(AuthCommands.Create());
         root.Subcommands.Add(EnvCommands.Create());
         root.Subcommands.Add(GroupCommands.Create());

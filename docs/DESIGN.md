@@ -43,7 +43,7 @@ Pattern: `ppac <group> [<subgroup>] <verb> [<name-or-id>] [flags]`. Group = PPAC
 
 ```
 ppac
-├─ auth        login | logout | status | profile list|use
+├─ auth        create | list | select | delete | clear | name | who | token | logout
 ├─ env         list | show | create | copy | backup | enable | disable | delete
 │  └─ settings get | set
 ├─ group       list | show | create | delete
@@ -137,7 +137,7 @@ With `-o json`, errors are written to stderr as a single JSON object: `{ "error"
 - Federated credentials (GitHub Actions OIDC) and managed identity.
 - Secrets via environment variables or stdin, never flags (flags are visible in process listings):
   - `PPAC_TENANT_ID`, `PPAC_CLIENT_ID`, `PPAC_CLIENT_SECRET`, `PPAC_CLIENT_CERT_PATH`
-- Named profiles: `ppac auth profile use <name>`. Token cache stored in the OS secure store where available.
+- Named profiles: `ppac auth create --name <name>`, `ppac auth select`, and `--profile <name>` for one command (see 4.5.3). Token cache stored in the OS secure store where available.
 - The app registration must be allowed to call the Power Platform management APIs. Not every operation is confirmed to support service principals (example: billing policy creation is documented as unsupported). **(verify per command, document in `--help`)**
 - Tokens and secrets are always redacted from logs.
 
@@ -162,7 +162,7 @@ Known constraints:
 
 #### 4.5.2 Signed-in admin (delegated) — implemented and proven
 
-The first working auth mode. `ppac auth login` is the only command that prompts; every other command reads the cached sign-in silently and exits 3 if there is none.
+The first working auth mode. `ppac auth create` (alias `login`) is the only command that prompts; every other command reads the cached sign-in silently and exits 3 if there is none.
 
 Requirements (one-time, per tenant):
 - A public-client Entra app registration with a **Mobile and desktop applications** redirect URI `http://localhost` and **Allow public client flows** on (needed for `--device-code`).
@@ -170,11 +170,27 @@ Requirements (one-time, per tenant):
 - The signed-in user holds Power Platform Administrator (or a suitable RBAC role).
 - Token scope: `https://api.powerplatform.com/.default`. Library: MSAL (`Microsoft.Identity.Client`) with the cross-platform cache helper.
 
-Proven on 2026-10-19: after `ppac auth login`, `GET /environmentmanagement/environments?api-version=2024-10-01` returned all 25 environments in the demo tenant. The same call returns 403 for a service principal (see 4.5.1), so environment listing currently needs a user token.
+Proven on 2026-10-19: after `ppac auth create`, `GET /environmentmanagement/environments?api-version=2024-10-01` returned all 25 environments in the demo tenant. The same call returns 403 for a service principal (see 4.5.1), so environment listing currently needs a user token.
 
 Environment object (flat fields, not the legacy `properties.*` shape): `id`, `displayName`, `type`, `state`, `azureRegion`, `geo`, `url`, `domainName`, `dataverseId`, `securityGroupId`, `environmentGroupId`, `protectionLevel`, `platformSku`, `createdBy`, `retentionDetails`. Table columns must be checked against live output, not assumed.
 
 Token cache: encrypted by the OS on Windows (DPAPI) and macOS (Keychain). On Linux an unprotected file in the user's config directory is used because a keyring is often absent on servers **(verify file permissions)**.
+
+#### 4.5.3 Named profiles (parity with `pac auth`) — implemented
+
+Source: the `pac auth` reference (learn.microsoft.com / MicrosoftDocs power-platform auth.md). pac subcommands: clear, create, delete, list, name, select, token, update, who.
+
+| pac | ppac | Status |
+|---|---|---|
+| `auth create --name` (1 to 30 chars) | `auth create --name` (alias `login`) | done, interactive and `--device-code` |
+| `auth list`, `select --index/--name`, `delete`, `clear`, `name --index --name`, `who`, `token` | same names, 1-based index | done |
+| `--tenant`, `--applicationId` | `--tenant`, `--client-id` (alias `--application-id`) | done |
+| `--clientSecret`, `--certificateDiskPath`, `--certificatePassword` | `--client-secret`, `--certificate-path`, `--certificate-password` | phase B |
+| `--managedIdentity`, `--githubFederated`, `--azureDevOpsFederated` | `--managed-identity`, `--github-federated`, `--azure-devops-federated` | phase B |
+| `--username`/`--password` | not planned (password flow is discouraged) | no |
+| `--cloud`, `--environment`, `auth update` | deferred (GCC, per-profile default environment) | later |
+
+Decisions: secrets are never stored in profiles (env var or flag only); deleting the active profile leaves none active; `--profile` / `PPAC_PROFILE` selects a profile for one command; profiles share one MSAL cache and logout removes only the profile's own account; a legacy `profile.json` is read as profile "default".
 
 ### 4.6 Idempotence
 - `set` commands are safe to re-run and converge on the requested state.
@@ -189,14 +205,14 @@ Token cache: encrypted by the OS on Windows (DPAPI) and macOS (Keychain). On Lin
 
 #### 4.7.1 Environment lifecycle (from Microsoft's reference, api-version 2024-10-01)
 
-Status: `env delete` and the operation commands are verified against the live service (delegated sign-in, 2026-10-19). `env copy` and the backup commands are built and unit-tested but not yet run live.
+Status: `env delete` and the operation commands are verified against the live service (delegated sign-in, 2026-10-19). The backup commands are verified live too. `env copy` has been run live once (see below) but its outcome is still being observed, so treat it as experimental. `--whatif` on copy is local only.
 
 | Command | Request | Notes |
 |---|---|---|
 | `env delete` | `DELETE /environmentmanagement/environments/{id}` | Live: returns 202 with an empty body and no `Operation-Location` header; the operation URL is in the `Location` header (`.../operations/{operationId}?api-version=1`). `ValidateOnly=true` for `--whatif` was honored: the environment was unchanged and no operation was created. `--wait` follows the operation to the end. |
-| `env copy` | `POST /environmentmanagement/environments/{targetId}/copy` | Body `copyType` (Minimal or Full), `sourceEnvironmentId`, optional `copyOptions`. The target is overwritten. Returns 202. `ValidateOnly` documented. Marked Preview. |
-| `env backup create` | `POST .../environments/{id}/backups` | Body `label`. Returns 201 with the backup, so it is synchronous. No `ValidateOnly`, so `--whatif` is a local dry run. |
-| `env backup list` / `delete` | `GET .../backups`, `DELETE .../backups/{backupId}` | Delete returns 204. |
+| `env copy` | `POST /environmentmanagement/environments/{targetId}/copy` | Body `copyType` (Minimal or Full), `sourceEnvironmentId`, optional `copyOptions`. The target is overwritten. Returns 202. `ValidateOnly` documented. Marked Preview. Live: `ValidateOnly=true` is NOT honored on copy. A validation-only request between two valid environments returned 202 and started a real Copy operation. `--whatif` therefore sends nothing. |
+| `env backup create` | `POST .../environments/{id}/backups` | Live: returns the backup (`id`, `label`, `backupPointDateTime`, `backupExpiryDateTime`, `createdBy.userId`), so it is synchronous; manual backups expired after 7 days. No `ValidateOnly`, so `--whatif` is a local dry run. |
+| `env backup list` / `delete` | `GET .../backups`, `DELETE .../backups/{backupId}` | Live: list columns (label, backupPointDateTime, backupExpiryDateTime, id) match the reference; `--whatif` delete left the backup in place and `--yes` removed it. |
 | `op list` / `show` / `wait` | `GET .../environments/{id}/operations[/{operationId}]` | Live: statuses seen are Queued, InProgress, Succeeded, Failed. The service keeps an environment's operations after the environment is deleted, so a GUID is used without looking the environment up. Documented but not yet seen: ValidationFailed, NoOperation, ValidationPassed. |
 
 Safety rules (implemented and unit-tested):
@@ -208,14 +224,17 @@ Observed behavior (live, 2026-10-19):
 - A failed operation carries its error on the failed entry of `stageStatuses` (`errorDetail.code` plus `fieldErrors.<code>.errorMessages`), not at the top level. A Create failed with `CrmProvisioningFailedForExistingEnvironment` ("The CDS 2.0 provisioning operation failed due to an internal server error") after about 17 minutes. While a later stage was still running, the operation showed `InProgress`.
 - Deleting a sandbox with no Dataverse database took about 2 minutes 26 seconds, so a 2-minute `--timeout` is too short for a delete. Default polling is every 30 seconds.
 - A failed create left the environment in `env list` intermittently (present in one call, absent in the next), and a direct `GET` of it returned 404. A direct `GET` of a healthy environment works, so a GUID is fetched directly rather than found through the list.
-- An environment with no Dataverse database is created immediately and its operations list is empty.
+- An environment with no Dataverse database is created immediately and its operations list is empty. A sandbox with Dataverse took about 49 minutes to create (Dev took about 3 minutes in April 2025), and one earlier create failed after about 17 minutes.
+- Copy is refused (HTTP 400, validation only) if either environment has no Dataverse: `InvalidLifecycleOperationRequest: The environment ... is not linked to a new CDS 2.0 instance. The following operation is forbidden for unlinked environments: 'CopyFromEnvironment'`.
+- Copy is refused (HTTP 400) if governance differs: `EnvironmentGovernanceConfigurationCopyError: The governance configuration properties of the target and source environments must match to perform a copy.` The only governance-looking field that differed between the two records was `protectionLevel` (`Standard` vs `Basic`); that this is the cause is not confirmed.
+- Errors can have no `code` or `message`, only `errorDetail.fieldErrors.<key>.errorMessages`; the reason is read from there.
+- Restoring a deleted environment keeps its ID and records a `Recover` operation.
 
 Open items:
-- `ValidateOnly` is verified for delete only. It is not yet verified for copy.
+- `ValidateOnly` is honored for delete (no operation created) and is not honored for copy (a real Copy started). Treat `ValidateOnly` as unreliable per endpoint and verify on a throwaway before using it for any other command.
 - `NoOperation` and `ValidationPassed` are treated as finished successfully, which is an assumption.
 - I found no create-environment operation in this API. `pac admin create` uses the older BAP API. `env create` is deferred pending a decision on using BAP.
 - Restore (`Restore Environment`, `Get Restore Candidates`) and copy candidates exist in the reference and are not built yet.
-- Backup columns (label, backupPointDateTime, backupExpiryDateTime, id) come from the reference; Dev had no backups, so they are not yet checked against live output.
 
 ### 4.8 Composability
 - Resources accept a name or GUID. An ambiguous name fails with exit 2 and lists candidates on stderr.
@@ -269,7 +288,7 @@ if ($LASTEXITCODE -eq 3) { throw "Not authenticated" }
 
 ## 8. Phased plan
 
-1. Foundation: auth, config, output formatting, exit codes, retry, `api`, `op`. **Status:** done and tested for signed-in admin auth (`auth login|status|logout`), profile config, output formats, exit codes, retry and paging, `api`, `env list`, `env show`. Remaining: `op`, service principal auth (`auth setup`), named profiles.
+1. Foundation: auth, config, output formatting, exit codes, retry, `api`, `op`. **Status:** done and tested for signed-in admin auth (`auth create|list|select|delete|clear|name|who|token|logout`, named profiles), output formats, exit codes, retry and paging, `api`, `env list|show|delete|copy|backup`, `op list|show|wait`. Remaining: service principal, certificate, managed identity and federated auth (`auth create` options, `auth setup`).
 2. Confirmed groups: `env`, `group`, `inventory`, `dlp`, `solution`, `package`, `security recommendations`, `license` (billing plans, capacity).
 3. Verify and add: `tenant settings`, `copilot settings`, `deploy`, `monitor`, `security settings`.
 4. Later, optional: interactive TUI layered on the same command core.

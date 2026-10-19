@@ -20,14 +20,32 @@ dotnet test
 ## Run
 
 ```powershell
-dotnet run --project src/Ppac.Cli -- auth login --tenant <tenant-id> --client-id <client-id>
-dotnet run --project src/Ppac.Cli -- auth status
+dotnet run --project src/Ppac.Cli -- auth create --name work --tenant <tenant-id> --client-id <client-id>
+dotnet run --project src/Ppac.Cli -- auth who
 dotnet run --project src/Ppac.Cli -- env list
 dotnet run --project src/Ppac.Cli -- env list -o json
 dotnet run --project src/Ppac.Cli -- api GET "/environmentmanagement/environmentGroups?api-version=2022-03-01-preview"
 ```
 
-`auth login` is the only command that opens a browser (or prints a device code with `--device-code`). Every other command uses the cached sign-in silently and exits 3 if there is none. Data goes to stdout, messages to stderr.
+`auth create` is the only command that opens a browser (or prints a device code with `--device-code`). Every other command uses the cached sign-in silently and exits 3 if there is none. Data goes to stdout, messages to stderr.
+
+## Authentication profiles
+
+Modelled on `pac auth`. Profiles are stored in `%APPDATA%\ppac\profiles.json` (no secrets). Tokens live in the MSAL cache.
+
+```powershell
+ppac auth create --name work --tenant <id> --client-id <id>   # sign in, creates and selects the profile
+ppac auth list                                                # * marks the active profile
+ppac auth select --index 2                                    # or --name work
+ppac auth name --index 2 --name personal
+ppac auth who                                                 # active profile and account
+ppac auth token                                               # raw access token (a secret)
+ppac auth delete --name work
+ppac auth clear --yes                                         # delete all profiles
+ppac env list --profile personal                              # use another profile for one command (or PPAC_PROFILE)
+```
+
+`auth login` and `auth status` remain as aliases of `create` and `who`. Re-running `create` with an existing name signs in again and reuses its tenant and client ID.
 
 ## Single-file executable
 

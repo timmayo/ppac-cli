@@ -23,6 +23,12 @@ public static class GlobalOptions
         Recursive = true,
     };
 
+    public static readonly Option<string> Profile = new("--profile")
+    {
+        Description = "Authentication profile to use for this command (or PPAC_PROFILE). See: ppac auth list",
+        Recursive = true,
+    };
+
     public static OutputFormat Format(ParseResult parse) =>
         OutputWriter.ParseFormatOrThrow(parse.GetValue(Output));
 }
@@ -62,7 +68,7 @@ public static class CommandRunner
     /// <summary>Builds an API client from the saved profile, flags and environment.</summary>
     public static PpApiClient CreateClient(ParseResult parse)
     {
-        var profile = new ProfileStore().Resolve(null, null, Environment.GetEnvironmentVariable);
+        var profile = new ProfileStore().Resolve(null, null, Environment.GetEnvironmentVariable, parse.GetValue(GlobalOptions.Profile));
         var verbose = parse.GetValue(GlobalOptions.Verbose);
         return new PpApiClient(
             new HttpClient { Timeout = TimeSpan.FromSeconds(100) },
