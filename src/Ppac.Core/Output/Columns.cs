@@ -12,6 +12,14 @@ public static class Columns
         new("Id", "id"),
     ];
 
+    public static readonly IReadOnlyList<Column> Groups =
+    [
+        new("DisplayName", "displayName"),
+        new("Description", "description"),
+        new("Created", "createdTime"),
+        new("Id", "id"),
+    ];
+
     /// <summary>Two-column view used when a single object is shown as a table, CSV or TSV.</summary>
     public static readonly IReadOnlyList<Column> Properties =
     [

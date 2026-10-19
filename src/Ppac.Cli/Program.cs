@@ -13,6 +13,7 @@ public static class Program
         root.Options.Add(GlobalOptions.Verbose);
         root.Subcommands.Add(AuthCommands.Create());
         root.Subcommands.Add(EnvCommands.Create());
+        root.Subcommands.Add(GroupCommands.Create());
         root.Subcommands.Add(ApiCommand.Create());
 
         var parse = root.Parse(args);
