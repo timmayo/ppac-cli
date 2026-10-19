@@ -247,4 +247,50 @@ public class InventoryTests
         await Assert.ThrowsAsync<PpacException>(() => Client(notRetried).SendAsync(HttpMethod.Post, "/x", "{}"));
         Assert.Single(notRetried.Urls);
     }
+
+    [Fact]
+    public void Detail_groups_the_item_like_the_admin_center_pane()
+    {
+        var usage = Row("""{ "name": "default", "properties": { "resourceId": "x", "lastUsed": "2026-10-18T23:59:59Z" } }""");
+        var d = InventoryQuery.Detail(Row(FlowRow), usage, Envs);
+
+        Assert.Equal("Export Solution to GitHub", (string)d["item"]!["name"]!);
+        Assert.Equal("Cloud flow", (string)d["item"]!["type"]!);
+        Assert.Equal("Contoso Dev", (string)d["environment"]!["name"]!);
+        Assert.Equal("unitedstates", (string)d["environment"]!["region"]!);
+        Assert.Equal("00000000-0000-0000-0000-0000000000bb", (string)d["activity"]!["ownerId"]!);
+        Assert.Equal("2026-10-18T23:59:59Z", (string)d["activity"]!["lastUsed"]!);
+        Assert.Equal("GetItem", (string)d["connectors"]!["shared_commondataserviceforapps"]!);
+        Assert.Equal("GetMessage, SendEmailV2", (string)d["connectors"]!["shared_office365"]!);
+    }
+
+    [Fact]
+    public void Detail_leaves_last_used_empty_when_there_is_no_usage_record()
+    {
+        var d = InventoryQuery.Detail(Row(FlowRow), null, Envs);
+        Assert.Equal("", (string)d["activity"]!["lastUsed"]!);
+    }
+
+    [Fact]
+    public void Lookups_filter_by_item_id_and_reject_unsafe_ids()
+    {
+        var item = (JsonArray)InventoryQuery.BuildLookup(["t"], "ABC-1")["Clauses"]!;
+        Assert.Equal("name", (string)item[1]!["FieldName"]!);
+        Assert.Equal("'abc-1'", (string)item[1]!["Values"]![0]!);
+
+        var usage = (JsonArray)InventoryQuery.BuildUsageLookup("ABC-1")["Clauses"]!;
+        Assert.Equal("properties.resourceId", (string)usage[1]!["FieldName"]!);
+
+        Assert.Throws<PpacException>(() => InventoryQuery.BuildLookup(["t"], "x' or 1=1"));
+    }
+
+    [Fact]
+    public async Task FindAsync_returns_nothing_and_skips_the_usage_call_when_the_item_is_missing()
+    {
+        var handler = new StubHandler(Respond("""{ "data": [] }"""));
+        var (item, usage) = await InventoryQuery.FindAsync(Client(handler), "00000000-0000-0000-0000-0000000000f1", default);
+        Assert.True(item is null);
+        Assert.True(usage is null);
+        Assert.Single(handler.Urls);
+    }
 }

@@ -19,6 +19,7 @@ public static class InventoryQuery
     public const string Path = "/resourcequery/resources/query?api-version=2024-10-01";
     public const string Table = "PowerPlatformResources";
     public const int MaxPageSize = 1000;
+    public const string UsageType = "microsoft.powerplatformusage/usagerecords";
 
     private static readonly string[] Apps =
     [
@@ -146,6 +147,112 @@ public static class InventoryQuery
         }
 
         throw new PpacException(ExitCodes.General, "Paging did not finish after 10000 pages.");
+    }
+
+    /// <summary>Request for one item by its ID (the resource "name"). Not yet verified live.</summary>
+    public static JsonObject BuildLookup(IReadOnlyList<string> types, string itemId) => new()
+    {
+        ["TableName"] = Table,
+        ["Options"] = new JsonObject { ["Top"] = 1 },
+        ["Clauses"] = new JsonArray
+        {
+            In("type", types),
+            In("name", [Safe(itemId, "item ID").ToLowerInvariant()]),
+        },
+    };
+
+    /// <summary>
+    /// Request for an item's usage record. Live shape: one record per item with properties.resourceId (the item ID)
+    /// and properties.lastUsed. The filter itself is not yet verified live.
+    /// </summary>
+    public static JsonObject BuildUsageLookup(string itemId) => new()
+    {
+        ["TableName"] = Table,
+        ["Options"] = new JsonObject { ["Top"] = 1 },
+        ["Clauses"] = new JsonArray
+        {
+            In("type", [UsageType]),
+            In("properties.resourceId", [Safe(itemId, "item ID").ToLowerInvariant()]),
+        },
+    };
+
+    /// <summary>The item row for an ID, or null. The usage record is null when the item has none.</summary>
+    public static async Task<(JsonObject? Item, JsonObject? Usage)> FindAsync(PpApiClient client, string itemId,
+        CancellationToken ct)
+    {
+        var item = await FirstAsync(client, BuildLookup(ResolveTypes(null), itemId), ct).ConfigureAwait(false);
+        if (item is null) return (null, null);
+        var usage = await FirstAsync(client, BuildUsageLookup(itemId), ct).ConfigureAwait(false);
+        return (item, usage);
+    }
+
+    private static async Task<JsonObject?> FirstAsync(PpApiClient client, JsonObject body, CancellationToken ct)
+    {
+        var response = await client.SendAsync(HttpMethod.Post, Path, body.ToJsonString(), ct, readOnly: true)
+            .ConfigureAwait(false);
+        return (response.Json as JsonObject)?["data"] is JsonArray { Count: > 0 } data ? data[0] as JsonObject : null;
+    }
+
+    /// <summary>
+    /// The detail view of one item, grouped like the admin center pane. Owner, creator and updater are object IDs
+    /// (names need Microsoft Graph). Connectors map each connector to its distinct operations.
+    /// </summary>
+    public static JsonObject Detail(JsonObject row, JsonObject? usage, IReadOnlyDictionary<string, EnvironmentInfo> environments)
+    {
+        var props = row["properties"] as JsonObject;
+        string P(string key) => props is null ? "" : OutputWriter.CellText(props, key);
+
+        var resourceType = OutputWriter.CellText(row, "type");
+        var environmentId = P("environmentId");
+        environments.TryGetValue(environmentId.ToLowerInvariant(), out var env);
+
+        var operations = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        if (props?["powerPlatformConnectors"] is JsonArray list)
+            foreach (var item in list)
+            {
+                if (item is not JsonObject c || OutputWriter.CellText(c, "connectorId") is not { Length: > 0 } id) continue;
+                if (!operations.TryGetValue(id, out var set)) operations[id] = set = new SortedSet<string>(StringComparer.Ordinal);
+                if (c["operations"] is JsonArray ops)
+                    foreach (var op in ops)
+                        if (op is JsonObject o && OutputWriter.CellText(o, "operationId") is { Length: > 0 } name)
+                            set.Add(name);
+            }
+
+        var connectors = new JsonObject();
+        foreach (var (id, set) in operations) connectors[id] = string.Join(", ", set);
+
+        var lastUsed = usage?["properties"] is JsonObject up ? OutputWriter.CellText(up, "lastUsed") : "";
+
+        return new JsonObject
+        {
+            ["item"] = new JsonObject
+            {
+                ["name"] = P("displayName"),
+                ["type"] = Label(resourceType),
+                ["id"] = OutputWriter.CellText(row, "name"),
+                ["status"] = P("status"),
+                ["triggerType"] = P("flowTriggerType"),
+                ["trigger"] = P("trigger.operationId"),
+                ["triggerConnector"] = P("trigger.connectorId"),
+            },
+            ["environment"] = new JsonObject
+            {
+                ["name"] = env?.Name ?? "",
+                ["type"] = env?.Type ?? "",
+                ["region"] = OutputWriter.CellText(row, "location"),
+                ["id"] = environmentId,
+            },
+            ["activity"] = new JsonObject
+            {
+                ["ownerId"] = P("ownerId"),
+                ["createdBy"] = P("createdBy"),
+                ["createdAt"] = P("createdAt"),
+                ["updatedBy"] = P("lastModifiedBy"),
+                ["updatedAt"] = P("lastModifiedAt"),
+                ["lastUsed"] = lastUsed,
+            },
+            ["connectors"] = connectors,
+        };
     }
 
     /// <summary>

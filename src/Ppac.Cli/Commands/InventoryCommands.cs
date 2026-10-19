@@ -13,6 +13,7 @@ public static class InventoryCommands
     {
         var inventory = new Command("inventory", "List apps, flows and agents across the tenant");
         inventory.Subcommands.Add(List());
+        inventory.Subcommands.Add(Show());
         return inventory;
     }
 
@@ -85,6 +86,39 @@ public static class InventoryCommands
 
             if (result.TotalRecords is { } total && rows.Count < total)
                 Console.Error.WriteLine($"Showing {rows.Count} of {total}. Use --all or a larger --limit for more.");
+            return ExitCodes.Ok;
+        }, ct));
+        return command;
+    }
+
+    private static Command Show()
+    {
+        var item = new Argument<string>("item-id") { Description = "Item ID (the Id column of 'inventory list')" };
+
+        var command = new Command("show", "Show one app, flow or agent. Exits 4 if it is not in the inventory.");
+        command.Arguments.Add(item);
+
+        command.SetAction((parse, ct) => CommandRunner.RunAsync(parse, async token =>
+        {
+            var format = GlobalOptions.Format(parse);
+            var itemId = parse.GetValue(item)!.Trim();
+            if (!Guid.TryParse(itemId, out _))
+                throw new PpacException(ExitCodes.Usage, "item-id must be a GUID (see the Id column of 'inventory list').");
+
+            var client = CommandRunner.CreateClient(parse);
+            var (row, usage) = await InventoryQuery.FindAsync(client, itemId, token);
+            if (row is null)
+                throw new PpacException(ExitCodes.NotFound, $"Item '{itemId}' not found in the inventory.");
+
+            var environments = new Dictionary<string, EnvironmentInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in await client.GetAllAsync($"{WriteHelpers.EnvironmentsPath}?{WriteHelpers.ApiVersion}", token))
+            {
+                var id = OutputWriter.CellText(e, "id");
+                if (id.Length > 0)
+                    environments[id] = new EnvironmentInfo(OutputWriter.CellText(e, "displayName"), OutputWriter.CellText(e, "type"));
+            }
+
+            ObjectWriter.Write(Console.Out, InventoryQuery.Detail(row, usage, environments), format);
             return ExitCodes.Ok;
         }, ct));
         return command;
