@@ -12,6 +12,17 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
+  <PropertyGroup Label="NuGet package">
+    <PackageId>TimMayo.Ppac.Cli.Tool</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Authors>Tim Mayo</Authors>
+    <Description>ppac: a command line for Power Platform administrators. Environments, inventory, operations and raw API calls from the terminal, as a companion to pac.</Description>
+    <PackageTags>power-platform;powerplatform;admin;cli;dotnet-tool</PackageTags>
+    <PackageProjectUrl>https://github.com/timmayo/ppac-cli</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/timmayo/ppac-cli</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Identity.Client" Version="4.*" />
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.*" />
