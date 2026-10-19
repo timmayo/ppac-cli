@@ -11,4 +11,11 @@ public static class Columns
         new("Region", "azureRegion"),
         new("Id", "id"),
     ];
+
+    /// <summary>Two-column view used when a single object is shown as a table, CSV or TSV.</summary>
+    public static readonly IReadOnlyList<Column> Properties =
+    [
+        new("Property", "property"),
+        new("Value", "value"),
+    ];
 }

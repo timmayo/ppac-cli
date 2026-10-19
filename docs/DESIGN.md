@@ -160,6 +160,22 @@ Known constraints:
 - Not yet determined: whether `pac admin application register` is required. The spike registered the app with it before the successful role assignment, so the two were never tested separately. Do not drop it from the setup until that is tested. `pac admin create-service-principal` is not used: it is environment-scoped and prints the secret in clear text with no `--json` option.
 - For CI, certificate or federated credentials are preferred over a client secret. Creating those natively (Microsoft Graph) is a later, `pac`-free option.
 
+#### 4.5.2 Signed-in admin (delegated) — implemented and proven
+
+The first working auth mode. `ppac auth login` is the only command that prompts; every other command reads the cached sign-in silently and exits 3 if there is none.
+
+Requirements (one-time, per tenant):
+- A public-client Entra app registration with a **Mobile and desktop applications** redirect URI `http://localhost` and **Allow public client flows** on (needed for `--device-code`).
+- The Power Platform API (`8578e004-a5c6-46e7-913e-12f58912df43`) added with delegated permissions for the commands used, and admin consent granted.
+- The signed-in user holds Power Platform Administrator (or a suitable RBAC role).
+- Token scope: `https://api.powerplatform.com/.default`. Library: MSAL (`Microsoft.Identity.Client`) with the cross-platform cache helper.
+
+Proven on 2026-10-19: after `ppac auth login`, `GET /environmentmanagement/environments?api-version=2024-10-01` returned all 25 environments in the demo tenant. The same call returns 403 for a service principal (see 4.5.1), so environment listing currently needs a user token.
+
+Environment object (flat fields, not the legacy `properties.*` shape): `id`, `displayName`, `type`, `state`, `azureRegion`, `geo`, `url`, `domainName`, `dataverseId`, `securityGroupId`, `environmentGroupId`, `protectionLevel`, `platformSku`, `createdBy`, `retentionDetails`. Table columns must be checked against live output, not assumed.
+
+Token cache: encrypted by the OS on Windows (DPAPI) and macOS (Keychain). On Linux an unprotected file in the user's config directory is used because a keyring is often absent on servers **(verify file permissions)**.
+
 ### 4.6 Idempotence
 - `set` commands are safe to re-run and converge on the requested state.
 - `create` returns exit 6 if the resource exists. `--if-not-exists` makes it succeed quietly and return the existing resource.
@@ -223,7 +239,7 @@ if ($LASTEXITCODE -eq 3) { throw "Not authenticated" }
 
 ## 8. Phased plan
 
-1. Foundation: auth, config, output formatting, exit codes, retry, `api`, `op`.
+1. Foundation: auth, config, output formatting, exit codes, retry, `api`, `op`. **Status:** done and tested for signed-in admin auth (`auth login|status|logout`), profile config, output formats, exit codes, retry and paging, `api`, `env list`, `env show`. Remaining: `op`, service principal auth (`auth setup`), named profiles.
 2. Confirmed groups: `env`, `group`, `inventory`, `dlp`, `solution`, `package`, `security recommendations`, `license` (billing plans, capacity).
 3. Verify and add: `tenant settings`, `copilot settings`, `deploy`, `monitor`, `security settings`.
 4. Later, optional: interactive TUI layered on the same command core.
@@ -231,7 +247,7 @@ if ($LASTEXITCODE -eq 3) { throw "Not authenticated" }
 ## 9. Open questions
 
 - Package deploy: wrap `pac package deploy` as a dependency, or implement natively? **(verify)**
-- Which commands support service principals and which require a user token? Known so far: environment groups list works as a service principal; environments list returns 403 (see 4.5.1).
+- Which commands support service principals and which require a user token? Known so far: environment groups list works as a service principal; environments list returns 403 for a service principal but works for a signed-in admin (see 4.5.1 and 4.5.2).
 - Is `pac admin application register` required for service principals on `api.powerplatform.com`, or does the RBAC role assignment alone suffice?
 - Which preview API versions are stable enough to depend on?
 - Endpoint coverage for `monitor`, `deploy`, and `security settings`.
