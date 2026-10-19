@@ -1,0 +1,238 @@
+# ppac: Design
+
+A command line version of the Power Platform admin center (PPAC), built on the Power Platform API, `pac`-equivalent operations, and the Dataverse Web API. Built for Power Platform admins. Scriptability is the primary requirement; interactive use is secondary.
+
+Status: draft. Items marked **(verify)** have not been confirmed against Microsoft docs or live traffic.
+
+## 0. Vision and scope
+
+`pac` is the simple, one-stop developer CLI for building on Power Platform. `ppac` is the equivalent for **administrators**: one tool to manage the tenant and its environments, covering what an admin does in the Power Platform admin center.
+
+| | `pac` | `ppac` |
+|---|---|---|
+| Audience | Developers, ISVs | Tenant and environment admins |
+| Scope | Build, package, ship solutions and components | Tenant, environments, governance, security, licensing, deployment oversight |
+| Mental model | The developer's workbench | The admin center, on the command line |
+
+Scope rules:
+
+1. **Admin-first.** If an admin does it in PPAC, it belongs in `ppac`. If it's about authoring (solution unpack/pack, PCF, plugin projects, canvas source), it stays in `pac`.
+2. **One tool, no stitching.** An admin should not need `pac`, PowerShell admin modules, and raw REST calls to run a tenant. Where `ppac` depends on another tool during early phases (for example, package deploy), that is a temporary gap, not the design.
+3. **Admin operations on solutions and packages stay in scope** (list, export, import, upgrade, deploy) because admins promote and move them between environments. Authoring commands are out of scope.
+4. **Same ergonomics as `pac`.** Simple install, one binary, consistent verbs, discoverable `--help`, so someone who knows `pac` feels at home.
+5. **Coverage goal is PPAC parity**, tracked per nav area. Until an area has a typed command, `ppac api` covers it.
+
+## 1. Principles
+
+1. Scripts are first-class users. Every behavior is predictable without a TTY.
+2. stdout is data, stderr is everything else.
+3. Output shapes and exit codes are a versioned public contract.
+4. Commands mirror the PPAC left nav so the portal and the CLI map one-to-one.
+5. Safe by default: writes support `--whatif`, destructive actions need explicit confirmation.
+6. No telemetry.
+
+## 2. Platform
+
+- Standalone, single-file binary per OS (Windows, Linux, macOS). No runtime required on the target machine.
+- Proposed stack: .NET with MSAL for auth and the Microsoft.PowerPlatform.Management SDK where it covers an operation, raw REST otherwise. **(verify SDK coverage per namespace)**
+- Usable from bash, PowerShell, GitHub Actions, and Azure DevOps. PowerShell users parse JSON with `ConvertFrom-Json`.
+
+## 3. Command structure
+
+Pattern: `ppac <group> [<subgroup>] <verb> [<name-or-id>] [flags]`. Group = PPAC nav area. Verbs are consistent across groups: `list`, `show`, `create`, `set`, `delete`, plus action verbs where needed.
+
+```
+ppac
+├─ auth        login | logout | status | profile list|use
+├─ env         list | show | create | copy | backup | enable | disable | delete
+│  └─ settings get | set
+├─ group       list | show | create | delete
+│  └─ rules    list | assign | ruleset ...
+├─ inventory   list --type app|flow|agent | query
+├─ tenant      settings list | get | set
+├─ security    overview | recommendations list|dismiss
+│  └─ settings data-privacy|identity|threat|compliance get|set
+├─ copilot     settings list | get | set
+├─ monitor     alerts rules list|enable|disable|create
+│  │           alerts triggered list
+│  └─ logs     ...
+├─ deploy      host list
+│  │           pipeline list | show | create | delete | run
+│  │           pipeline stage list | create | link-env
+│  │           run list | show              (deployment history)
+│  │           settings get | set --host <name>
+│  └─ catalog  list | show | install | status | submit
+├─ license     summary | env | billing-plan list|create|link | capacity
+├─ solution    list | export | import | upgrade | publish | version
+├─ package     deploy | show
+├─ dlp         list | show | create
+├─ op          show | wait <operation-id>
+├─ api         <METHOD> <path>      (raw authenticated call)
+└─ config      get | set | list
+```
+
+### Backing API by group
+
+| Group | Backing | Confidence |
+|---|---|---|
+| env, group, inventory | Power Platform API (`environmentmanagement`, `resourcequery`) | Confirmed |
+| security recommendations | Power Platform API (Security / Analytics recommendation permissions) | Confirmed to exist; endpoints to verify |
+| license billing-plan, capacity | Power Platform API (`licensing`, capacity report) | Confirmed to exist |
+| dlp | Admin DLP APIs | Confirmed to exist |
+| solution, package | Dataverse Web API per environment (`ExportSolution`, `ImportSolution`, `ImportSolutionAsync`, `StageSolution`) | Confirmed for solutions; package deploy has no Web API equivalent found, may need Package Deployer |
+| tenant settings | `pac admin list-tenant-settings`, `pac admin update-tenant-settings` (single setting by name/value, or a settings file); native endpoint **(verify)** | Confirmed in pac |
+| env governance (Managed Environments), admin mode | `pac admin set-governance-config`, `pac admin set-runtime-state`; native endpoint **(verify)** | Confirmed in pac |
+| env lifecycle extras | `pac admin` also has `backup`, `restore`, `reset`, `delete`, `set-backup-retention-period`, `assign-user`, `assign-group`, `add-group`, `self-elevate`, `status`, and `query` (tenant-level resource query) | Confirmed in pac |
+| copilot settings | Permissions exist (`CopilotGovernance.Settings.*`); endpoints **(verify)** | Partial |
+| deploy pipeline list, run | `pac pipeline list` and `pac pipeline deploy` exist (deploy takes solution name, current/new version, and stage ID, with `--wait`). Native equivalent likely Dataverse Web API on the pipelines host environment | Confirmed in pac; native path **(verify)** |
+| deploy pipeline/stage create, delete, link-env; run history | Pipelines data lives in Dataverse tables on the host environment (`deploymentpipeline` confirmed as a table name; others **(verify)**) | Likely, unverified |
+| deploy catalog | `pac catalog` has `list`, `install`, `status`, `submit`, `update` (`create-submission` is slated for removal). Native endpoints **(verify)** | Confirmed in pac |
+| deploy settings (auto-convert to Managed, cross-region deployments, shared deployments) | Unknown whether tenant-level or per host environment | Unverified |
+| monitor, security settings, license per-product | **(verify)** by checking docs and PPAC network traffic | Unverified |
+
+Rule: do not ship a typed command until its endpoint is verified. Until then, `ppac api` covers it.
+
+## 4. Scriptability contract
+
+### 4.1 Streams
+- stdout: command result data only.
+- stderr: progress, warnings, logs, prompts, errors.
+- `ppac ... | jq` must never be broken by non-data output.
+
+### 4.2 Output formats
+- `-o, --output table|json|jsonl|csv|tsv`.
+- Default: `table` when stdout is a TTY, `json` when piped.
+- `jsonl` for large lists (streamed, one object per line).
+- `--select <fields>` limits fields. Complex filtering is left to `jq`.
+- JSON field names and types are a versioned contract. Renames or removals are breaking changes (major version only). Additions are allowed in minor versions.
+- Pagination handled internally. `--limit <n>` to cap, `--all` to fetch everything.
+- Dates ISO 8601 UTC. Sizes in bytes in machine formats, human-readable only in `table`.
+
+### 4.3 Exit codes (stable)
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | General failure |
+| 2 | Usage error (bad flags, missing confirmation in non-interactive mode) |
+| 3 | Authentication failure |
+| 4 | Not found |
+| 5 | Forbidden / insufficient permissions |
+| 6 | Conflict (already exists, state conflict) |
+| 7 | Throttled, retries exhausted |
+| 8 | Async operation failed |
+| 9 | Timeout |
+
+With `-o json`, errors are written to stderr as a single JSON object: `{ "error": { "code": "...", "message": "...", "exitCode": N, "requestId": "..." } }`.
+
+### 4.4 Non-interactive behavior
+- If stdin is not a TTY, never prompt.
+- Destructive commands without `--yes` fail with exit 2 in non-interactive mode. Interactive mode asks for confirmation (deletes require typing the resource name).
+- `--whatif` on every write command: print what would change, change nothing, exit 0.
+- `--no-color` and `NO_COLOR` respected. Color only on a TTY.
+
+### 4.5 Authentication
+- Interactive user login (device code and browser).
+- Service principal: client secret or certificate.
+- Federated credentials (GitHub Actions OIDC) and managed identity.
+- Secrets via environment variables or stdin, never flags (flags are visible in process listings):
+  - `PPAC_TENANT_ID`, `PPAC_CLIENT_ID`, `PPAC_CLIENT_SECRET`, `PPAC_CLIENT_CERT_PATH`
+- Named profiles: `ppac auth profile use <name>`. Token cache stored in the OS secure store where available.
+- The app registration must be allowed to call the Power Platform management APIs. Not every operation is confirmed to support service principals (example: billing policy creation is documented as unsupported). **(verify per command, document in `--help`)**
+- Tokens and secrets are always redacted from logs.
+
+#### 4.5.1 Service principal bootstrap (`ppac auth setup`)
+
+Optional guided setup. It is a convenience, not a runtime dependency: every other `ppac` command works without it.
+
+Flow (proven in the spike, 2026-10-19):
+1. Admin signs in interactively (browser or device code). `ppac` never collects or stores the admin's password.
+2. Create or reuse an Entra app registration, its service principal, and a client secret (Microsoft Graph). Store the secret in the OS secure store under the chosen profile. It is never written to stdout or logs.
+3. Add a Power Platform API permission (API `8578e004-a5c6-46e7-913e-12f58912df43`) to the app registration and grant admin consent. If the API's service principal is missing from the tenant, create it first (`New-MgServicePrincipal -AppId 8578e004-a5c6-46e7-913e-12f58912df43`). Without this step the role assignment in step 4 failed with `PrincipalDoesNotExist`; after it, the same request succeeded.
+4. Assign an RBAC role (Reader or Contributor) with `POST /authorization/roleAssignments?api-version=2024-10-01`. Body: `principalType` `ApplicationUser`, `principalObjectId` = the Enterprise Application object ID (not the client ID), `scope` `/tenants/{tenantId}`.
+5. Verify with a token request (`https://api.powerplatform.com/.default`) and a read-only call, then print tenant ID and application ID only.
+
+Known constraints:
+- Service principals do not use application permissions on this API. Access comes only from the RBAC role in step 4, at tenant, environment group, or environment scope.
+- The client secret expires. Add `ppac auth rotate` and show the expiry in `ppac auth status`.
+- Spike result: with the app configured as above, `GET /environmentmanagement/environmentGroups` worked as the service principal (4 groups returned).
+- Spike result: `GET /environmentmanagement/environments?api-version=2024-10-01` returned 403 `Caller is not an authorized app` for the same service principal. Microsoft's reference describes that operation as "environments available for the authenticated user". Whether a service principal can list environments through another route (Inventory `POST /resourcequery/resources/query`, or the legacy BAP admin endpoint) is **(verify)** during Phase 1.
+- Not yet determined: whether `pac admin application register` is required. The spike registered the app with it before the successful role assignment, so the two were never tested separately. Do not drop it from the setup until that is tested. `pac admin create-service-principal` is not used: it is environment-scoped and prints the secret in clear text with no `--json` option.
+- For CI, certificate or federated credentials are preferred over a client secret. Creating those natively (Microsoft Graph) is a later, `pac`-free option.
+
+### 4.6 Idempotence
+- `set` commands are safe to re-run and converge on the requested state.
+- `create` returns exit 6 if the resource exists. `--if-not-exists` makes it succeed quietly and return the existing resource.
+- `delete` of a missing resource returns exit 4, or 0 with `--if-exists`.
+
+### 4.7 Async operations
+- Long-running commands (solution import, env copy, backup) wait by default with a progress line on stderr.
+- `--timeout <duration>` bounds the wait (exit 9 on expiry).
+- `--no-wait` returns immediately and prints the operation ID.
+- `ppac op show <id>` reports status. `ppac op wait <id>` blocks until done and exits 0 or 8.
+
+### 4.8 Composability
+- Resources accept a name or GUID. An ambiguous name fails with exit 2 and lists candidates on stderr.
+- `-q, --id-only` prints one identifier per line, for `xargs` and loops.
+- Targeting: `--env <name|id>`. Default from `ppac config set default.env <name>`. Flag > env var (`PPAC_ENV`) > config file > built-in default.
+- Commands that take tenant-wide scope do not require `--env`. Environment-scoped commands (solution, package) always do.
+
+### 4.9 Resilience
+- Retry transient failures (429, 5xx) with exponential backoff and jitter, honoring `Retry-After`.
+- `--max-retries <n>` (default 5) and `--concurrency <n>` for bulk operations.
+- Known service limit to respect: the Power Platform for Admins V2 connector documents 100 calls per 60 seconds per connection. **(verify limits for the REST API directly)**
+
+### 4.10 Escape hatch
+`ppac api <METHOD> <path> [--body <json|@file>] [--api-version <v>]` makes an authenticated call and prints the response body to stdout. This keeps users unblocked when a typed command does not exist or an endpoint is still in preview.
+
+## 5. CLI conventions
+
+- Noun-verb structure, kebab-case long flags, short flags only for the most common (`-o`, `-q`, `-h`).
+- `--help` on every command and group, with at least one real example.
+- `--version`; `ppac completion bash|zsh|powershell` for shell completion.
+- `--verbose` (request summaries) and `--debug` (full detail, secrets redacted), both to stderr.
+- Config file at the standard per-OS config location. Environment variables prefixed `PPAC_`.
+- Semantic versioning. Contract changes (output shape, exit codes, flag removal) only in major versions, with a deprecation period and a stderr warning first.
+- Preview/beta API usage is flagged in `--help` and in verbose output, since those endpoints can change.
+
+## 6. Examples
+
+```bash
+# Delete inactive sandbox environments (dry run first)
+ppac env list --type sandbox -o json \
+  | jq -r '.[] | select(.lastActivity < "2026-07-01") | .id' \
+  | xargs -I{} ppac env delete {} --whatif
+
+# Export a solution from Dev and import it to Test, non-interactive
+ppac solution export MySolution --env Dev --managed --out ./MySolution.zip
+ppac solution import ./MySolution.zip --env Test --yes --timeout 30m
+```
+
+```powershell
+$envs = ppac env list -o json | ConvertFrom-Json
+if ($LASTEXITCODE -eq 3) { throw "Not authenticated" }
+```
+
+## 7. Testing
+
+- Golden-file tests for JSON output of every command (guards the contract).
+- Exit code tests for each documented code.
+- Non-interactive behavior tests (no TTY, no prompts, `--yes` required).
+- Recorded-response tests for API calls. A live smoke suite against a dev tenant, run manually.
+- Contract tests fail the build on any unannounced shape change.
+
+## 8. Phased plan
+
+1. Foundation: auth, config, output formatting, exit codes, retry, `api`, `op`.
+2. Confirmed groups: `env`, `group`, `inventory`, `dlp`, `solution`, `package`, `security recommendations`, `license` (billing plans, capacity).
+3. Verify and add: `tenant settings`, `copilot settings`, `deploy`, `monitor`, `security settings`.
+4. Later, optional: interactive TUI layered on the same command core.
+
+## 9. Open questions
+
+- Package deploy: wrap `pac package deploy` as a dependency, or implement natively? **(verify)**
+- Which commands support service principals and which require a user token? Known so far: environment groups list works as a service principal; environments list returns 403 (see 4.5.1).
+- Is `pac admin application register` required for service principals on `api.powerplatform.com`, or does the RBAC role assignment alone suffice?
+- Which preview API versions are stable enough to depend on?
+- Endpoint coverage for `monitor`, `deploy`, and `security settings`.
+- Distribution: GitHub Releases, winget, Homebrew, `dotnet tool`.
