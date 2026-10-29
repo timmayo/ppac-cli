@@ -11,6 +11,8 @@ namespace Ppac.Cli.Commands;
 
 public static class EnvironmentCommands
 {
+    private const string ReadPermission = "EnvironmentManagement.Environments.Read";
+
     public static IEnumerable<CommandSpec> Specs()
     {
         yield return new CommandSpec
@@ -21,7 +23,7 @@ public static class EnvironmentCommands
             Status = VerificationStatus.Verified,
             Preview = true,
             Api = $"GET /environmentmanagement/environments?api-version={EnvironmentApi.ApiVersion}",
-            Permission = "EnvironmentManagement.Environments.Read",
+            Permission = ReadPermission,
             Options = new[]
             {
                 new OptionSpec("--filter", new[] { "-f" }, OptionType.String,
@@ -32,17 +34,84 @@ public static class EnvironmentCommands
             },
             Handler = ListAsync
         };
+
+        yield return new CommandSpec
+        {
+            Path = new[] { "environment", "get" },
+            Description = "Show the details of one environment.",
+            Class = CommandClass.Read,
+            Status = VerificationStatus.Verified,
+            Preview = true,
+            Api = $"GET /environmentmanagement/environments/{{environmentId}}?api-version={EnvironmentApi.ApiVersion}",
+            Permission = ReadPermission,
+            Options = new[]
+            {
+                new OptionSpec("--environment", Array.Empty<string>(), OptionType.String,
+                    "Environment ID, as shown by 'ppac environment list'.", Required: true),
+                new OptionSpec("--select", Array.Empty<string>(), OptionType.String,
+                    "Comma-separated list of properties to return, for example \"displayName,state,url\"."),
+                JsonOutput.Option
+            },
+            Handler = GetAsync
+        };
     }
 
-    private static async Task<int> ListAsync(CommandContext ctx, CancellationToken cancellationToken)
+    private static Task<int> ListAsync(CommandContext ctx, CancellationToken cancellationToken)
     {
         var top = ctx.GetInt("--top");
         if (top is not null && top < 1)
         {
             Console.Error.WriteLine("--top must be 1 or greater.");
-            return ExitCodes.Usage;
+            return Task.FromResult(ExitCodes.Usage);
         }
 
+        return RunAsync(async (api, cloud) =>
+        {
+            var environments = await EnvironmentApi.ListAsync(
+                api, cloud, ctx.GetString("--filter"), top, cancellationToken);
+
+            if (ctx.GetBool(JsonOutput.OptionName))
+            {
+                JsonOutput.Write(new JsonObject { ["value"] = environments });
+            }
+            else
+            {
+                WriteTable(environments);
+            }
+            return ExitCodes.Success;
+        }, cancellationToken);
+    }
+
+    private static Task<int> GetAsync(CommandContext ctx, CancellationToken cancellationToken)
+    {
+        var environmentId = ctx.GetString("--environment")!;
+        if (string.IsNullOrWhiteSpace(environmentId))
+        {
+            Console.Error.WriteLine("--environment must not be empty.");
+            return Task.FromResult(ExitCodes.Usage);
+        }
+
+        return RunAsync(async (api, cloud) =>
+        {
+            var environment = await EnvironmentApi.GetAsync(
+                api, cloud, environmentId.Trim(), ctx.GetString("--select"), cancellationToken);
+
+            if (ctx.GetBool(JsonOutput.OptionName))
+            {
+                JsonOutput.Write(environment);
+            }
+            else
+            {
+                WriteDetails(environment);
+            }
+            return ExitCodes.Success;
+        }, cancellationToken);
+    }
+
+    /// <summary>Signs in from the active profile, runs the call, and maps failures to exit codes.</summary>
+    private static async Task<int> RunAsync(
+        Func<PowerPlatformApi, CloudConfig, Task<int>> call, CancellationToken cancellationToken)
+    {
         var profile = ProfileStore.GetActive();
         if (profile is null)
         {
@@ -71,19 +140,7 @@ public static class EnvironmentCommands
         try
         {
             using var http = new HttpClient();
-            var api = new PowerPlatformApi(http, token);
-            var environments = await EnvironmentApi.ListAsync(
-                api, cloud, ctx.GetString("--filter"), top, cancellationToken);
-
-            if (ctx.GetBool(JsonOutput.OptionName))
-            {
-                JsonOutput.Write(new JsonObject { ["value"] = environments });
-            }
-            else
-            {
-                WriteTable(environments);
-            }
-            return ExitCodes.Success;
+            return await call(new PowerPlatformApi(http, token), cloud);
         }
         catch (ApiException ex)
         {
@@ -91,9 +148,12 @@ public static class EnvironmentCommands
             if (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 Console.Error.WriteLine(
-                    "Check that the app registration has the delegated permission " +
-                    "EnvironmentManagement.Environments.Read with admin consent, and that the " +
-                    "signed-in user has a Power Platform admin role.");
+                    $"Check that the app registration has the delegated permission {ReadPermission} " +
+                    "with admin consent, and that the signed-in user has a Power Platform admin role.");
+            }
+            else if (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                Console.Error.WriteLine("Check the environment ID. 'ppac environment list' shows the IDs.");
             }
             return ExitCodes.Failure;
         }
@@ -134,6 +194,47 @@ public static class EnvironmentCommands
         Console.WriteLine($"{rows.Count} environment(s).");
     }
 
+    // Prints the commonly needed properties that are present. --json returns everything.
+    private static void WriteDetails(JsonNode environment)
+    {
+        var fields = new (string Label, string Property)[]
+        {
+            ("Name", "displayName"),
+            ("Environment ID", "id"),
+            ("Type", "type"),
+            ("State", "state"),
+            ("Region", "azureRegion"),
+            ("Geo", "geo"),
+            ("Admin mode", "adminMode"),
+            ("Protection level", "protectionLevel"),
+            ("Dataverse ID", "dataverseId"),
+            ("Domain name", "domainName"),
+            ("URL", "url"),
+            ("Version", "version"),
+            ("Environment group ID", "environmentGroupId"),
+            ("Security group ID", "securityGroupId"),
+            ("Connected group ID", "connectedGroupId"),
+            ("Created", "createdDateTime"),
+            ("Tenant ID", "tenantId")
+        };
+
+        foreach (var (label, property) in fields)
+        {
+            var value = Str(environment, property);
+            if (!string.IsNullOrEmpty(value))
+            {
+                Console.WriteLine($"{label + ":",-23}{value}");
+            }
+        }
+
+        var createdBy = Str(environment["createdBy"], "id");
+        if (!string.IsNullOrEmpty(createdBy))
+        {
+            Console.WriteLine($"{"Created by:",-23}{createdBy}");
+        }
+    }
+
+    // Reads a property as text. Date values arrive as JSON strings, so this covers them too.
     private static string? Str(JsonNode? node, string name) =>
         node?[name] is JsonValue value && value.TryGetValue<string>(out var s) ? s : null;
 }

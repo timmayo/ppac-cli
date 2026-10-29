@@ -6,10 +6,29 @@ namespace Ppac.Cli.Api;
 /// <summary>
 /// Environment Management operations.
 /// List: GET /environmentmanagement/environments?api-version=2024-10-01 (preview).
+/// Get:  GET /environmentmanagement/environments/{environmentId}?api-version=2024-10-01 (preview).
 /// </summary>
 public static class EnvironmentApi
 {
     public const string ApiVersion = "2024-10-01";
+
+    /// <summary>Gets one environment by ID. Throws ApiException (404) when it does not exist.</summary>
+    public static async Task<JsonNode> GetAsync(
+        PowerPlatformApi api,
+        CloudConfig cloud,
+        string environmentId,
+        string? select,
+        CancellationToken cancellationToken)
+    {
+        var query = new List<string> { $"api-version={ApiVersion}" };
+        if (!string.IsNullOrWhiteSpace(select))
+        {
+            query.Add("$select=" + Uri.EscapeDataString(select));
+        }
+
+        var url = $"{cloud.ApiBaseUrl}/environmentmanagement/environments/{Uri.EscapeDataString(environmentId)}?{string.Join("&", query)}";
+        return await api.GetJsonAsync(url, cancellationToken);
+    }
 
     /// <summary>Lists environments, following @odata.nextlink until all pages (or --top) are read.</summary>
     public static async Task<JsonArray> ListAsync(
