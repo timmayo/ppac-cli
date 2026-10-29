@@ -1,17 +1,22 @@
-using System.CommandLine;
-using Ppac.Cli.Commands;
+using Ppac.Cli.Registry;
 
 namespace Ppac.Cli;
 
 internal static class Program
 {
-    private static Task<int> Main(string[] args)
+    private static async Task<int> Main(string[] args)
     {
-        var root = new RootCommand("ppac - Power Platform admin center CLI");
-        root.Subcommands.Add(AuthCommands.Build());
-        root.Subcommands.Add(EnvironmentCommands.Build());
+        // The command tree is generated from the registry. --help and --version
+        // are built into System.CommandLine.
+        var root = CommandTreeBuilder.Build(CommandRegistry.All, CommandRegistry.GroupDescriptions);
 
-        // --help and --version are built into System.CommandLine.
-        return root.Parse(args).InvokeAsync();
+        var parseResult = root.Parse(args);
+        var exitCode = await parseResult.InvokeAsync();
+
+        // System.CommandLine returns 1 for an invalid command line; report it as 2
+        // so scripts can tell it apart from a command that ran and failed.
+        return parseResult.Errors.Count > 0 && exitCode != ExitCodes.Success
+            ? ExitCodes.Usage
+            : exitCode;
     }
 }

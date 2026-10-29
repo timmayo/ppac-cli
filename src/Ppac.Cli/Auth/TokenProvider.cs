@@ -60,14 +60,17 @@ public static class TokenProvider
         return result.AccessToken;
     }
 
-    /// <summary>Signs in with the device code flow, printing the instructions MSAL provides.</summary>
+    /// <summary>Signs in with the device code flow, passing the sign-in instructions to showMessage.</summary>
     public static async Task<AuthenticationResult> SignInWithDeviceCodeAsync(
-        IPublicClientApplication app, CloudConfig cloud, CancellationToken cancellationToken)
+        IPublicClientApplication app,
+        CloudConfig cloud,
+        Action<string> showMessage,
+        CancellationToken cancellationToken)
     {
         return await app
             .AcquireTokenWithDeviceCode(new[] { cloud.ApiScope }, deviceCode =>
             {
-                Console.WriteLine(deviceCode.Message);
+                showMessage(deviceCode.Message);
                 return Task.CompletedTask;
             })
             .ExecuteAsync(cancellationToken);

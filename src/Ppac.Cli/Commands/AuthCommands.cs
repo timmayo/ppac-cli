@@ -1,7 +1,9 @@
-using System.CommandLine;
+using System.Text.Json.Nodes;
 using Microsoft.Identity.Client;
 using Ppac.Cli.Auth;
 using Ppac.Cli.Config;
+using Ppac.Cli.Output;
+using Ppac.Cli.Registry;
 
 namespace Ppac.Cli.Commands;
 
@@ -10,148 +12,211 @@ public static class AuthCommands
     // PAC CLI limits profile names to 1-30 characters; mirror that.
     private const int MaxProfileNameLength = 30;
 
-    private static string Truncate(string value, int max) =>
-        value.Length <= max ? value : value[..max];
-
-    public static Command Build()
+    public static IEnumerable<CommandSpec> Specs()
     {
-        var auth = new Command("auth", "Manage authentication profiles.");
-        auth.Subcommands.Add(BuildCreate());
-        auth.Subcommands.Add(BuildList());
-        auth.Subcommands.Add(BuildWho());
-        return auth;
+        yield return new CommandSpec
+        {
+            Path = new[] { "auth", "create" },
+            Description = "Create an authentication profile and sign in.",
+            Class = CommandClass.Write,
+            Status = VerificationStatus.Verified,
+            Interactive = true,
+            Api = "Microsoft Entra ID device code flow (MSAL.NET); writes the local profile store",
+            Options = new[]
+            {
+                new OptionSpec("--name", new[] { "-n" }, OptionType.String,
+                    "Profile name (1-30 characters). Defaults to the signed-in user's name."),
+                new OptionSpec("--tenant", new[] { "-t" }, OptionType.String,
+                    "Directory (tenant) ID or domain, for example contoso.onmicrosoft.com.", Required: true),
+                new OptionSpec("--applicationId", new[] { "-id" }, OptionType.String,
+                    "Application (client) ID of the Entra app registration.", Required: true),
+                new OptionSpec("--deviceCode", new[] { "-dc" }, OptionType.Bool,
+                    "Sign in with the device code flow."),
+                JsonOutput.Option
+            },
+            Handler = CreateAsync
+        };
+
+        yield return new CommandSpec
+        {
+            Path = new[] { "auth", "list" },
+            Description = "List authentication profiles.",
+            Class = CommandClass.Read,
+            Status = VerificationStatus.Verified,
+            Api = "Local profile store",
+            Options = new[] { JsonOutput.Option },
+            Handler = (ctx, _) => Task.FromResult(List(ctx))
+        };
+
+        yield return new CommandSpec
+        {
+            Path = new[] { "auth", "who" },
+            Description = "Show the active authentication profile.",
+            Class = CommandClass.Read,
+            Status = VerificationStatus.Verified,
+            Api = "Local profile store",
+            Options = new[] { JsonOutput.Option },
+            Handler = (ctx, _) => Task.FromResult(Who(ctx))
+        };
     }
 
-    private static Command BuildCreate()
+    private static async Task<int> CreateAsync(CommandContext ctx, CancellationToken cancellationToken)
     {
-        var name = new Option<string?>("--name", "-n")
-        {
-            Description = "Profile name. Defaults to the signed-in user's name."
-        };
-        var tenant = new Option<string>("--tenant", "-t")
-        {
-            Description = "Directory (tenant) ID or domain, for example contoso.onmicrosoft.com.",
-            Required = true
-        };
-        var applicationId = new Option<string>("--applicationId", "-id")
-        {
-            Description = "Application (client) ID of the Entra app registration.",
-            Required = true
-        };
-        var deviceCode = new Option<bool>("--deviceCode", "-dc")
-        {
-            Description = "Sign in with the device code flow."
-        };
+        var json = ctx.GetBool(JsonOutput.OptionName);
 
-        var create = new Command("create", "Create an authentication profile and sign in.")
+        if (!ctx.GetBool("--deviceCode"))
         {
-            name, tenant, applicationId, deviceCode
-        };
+            Console.Error.WriteLine("Only --deviceCode sign-in is supported in this version.");
+            return ExitCodes.Usage;
+        }
 
-        create.SetAction(async (parseResult, cancellationToken) =>
+        var requestedName = ctx.GetString("--name");
+        if (requestedName is not null && (requestedName.Length is 0 or > MaxProfileNameLength))
         {
-            if (!parseResult.GetValue(deviceCode))
+            Console.Error.WriteLine($"--name must be 1-{MaxProfileNameLength} characters.");
+            return ExitCodes.Usage;
+        }
+
+        var tenant = ctx.GetString("--tenant")!;
+        var clientId = ctx.GetString("--applicationId")!;
+        var cloud = CloudConfig.Commercial;
+
+        // In --json mode keep stdout clean: the sign-in instructions go to stderr.
+        Action<string> showMessage = message =>
+        {
+            if (json)
             {
-                Console.Error.WriteLine("Only --deviceCode sign-in is supported in this version.");
-                return 2;
+                Console.Error.WriteLine(message);
             }
-
-            var requestedName = parseResult.GetValue(name);
-            if (requestedName is not null && (requestedName.Length is 0 or > MaxProfileNameLength))
+            else
             {
-                Console.Error.WriteLine($"--name must be 1-{MaxProfileNameLength} characters.");
-                return 2;
+                Console.WriteLine(message);
             }
+        };
 
-            var tenantValue = parseResult.GetValue(tenant)!;
-            var clientValue = parseResult.GetValue(applicationId)!;
-            var cloud = CloudConfig.Commercial;
+        try
+        {
+            var app = await TokenProvider.CreateAppAsync(tenant, clientId, cloud);
+            var result = await TokenProvider.SignInWithDeviceCodeAsync(app, cloud, showMessage, cancellationToken);
 
-            try
+            var profileName = requestedName ?? Truncate(result.Account.Username, MaxProfileNameLength);
+            ProfileStore.Upsert(new Profile(
+                Name: profileName,
+                TenantId: tenant,
+                ClientId: clientId,
+                Cloud: cloud.Name,
+                Username: result.Account.Username,
+                HomeAccountId: result.Account.HomeAccountId.Identifier));
+
+            if (json)
             {
-                var app = await TokenProvider.CreateAppAsync(tenantValue, clientValue, cloud);
-                var result = await TokenProvider.SignInWithDeviceCodeAsync(app, cloud, cancellationToken);
-
-                var profileName = parseResult.GetValue(name) ?? Truncate(result.Account.Username, MaxProfileNameLength);
-                ProfileStore.Upsert(new Profile(
-                    Name: profileName,
-                    TenantId: tenantValue,
-                    ClientId: clientValue,
-                    Cloud: cloud.Name,
-                    Username: result.Account.Username,
-                    HomeAccountId: result.Account.HomeAccountId.Identifier));
-
+                JsonOutput.Write(new JsonObject
+                {
+                    ["profile"] = profileName,
+                    ["user"] = result.Account.Username,
+                    ["tenantId"] = tenant,
+                    ["clientId"] = clientId,
+                    ["cloud"] = cloud.Name
+                });
+            }
+            else
+            {
                 Console.WriteLine($"Signed in as {result.Account.Username}.");
                 Console.WriteLine($"Profile '{profileName}' created and selected.");
-                return 0;
             }
-            catch (MsalServiceException ex)
-            {
-                Console.Error.WriteLine($"Sign-in failed ({ex.ErrorCode}): {ex.Message}");
-                return 1;
-            }
-            catch (OperationCanceledException)
-            {
-                Console.Error.WriteLine("Sign-in cancelled.");
-                return 1;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Sign-in failed: {ex.Message}");
-                return 1;
-            }
-        });
-
-        return create;
+            return ExitCodes.Success;
+        }
+        catch (MsalServiceException ex)
+        {
+            Console.Error.WriteLine($"Sign-in failed ({ex.ErrorCode}): {ex.Message}");
+            return ExitCodes.Failure;
+        }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine("Sign-in cancelled.");
+            return ExitCodes.Failure;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Sign-in failed: {ex.Message}");
+            return ExitCodes.Failure;
+        }
     }
 
-    private static Command BuildList()
+    private static int List(CommandContext ctx)
     {
-        var list = new Command("list", "List authentication profiles.");
+        var file = ProfileStore.Load();
 
-        list.SetAction(_ =>
+        if (ctx.GetBool(JsonOutput.OptionName))
         {
-            var file = ProfileStore.Load();
-            if (file.Profiles.Count == 0)
-            {
-                Console.WriteLine("No profiles. Run 'ppac auth create --deviceCode --tenant <id> --applicationId <id>'.");
-                return 0;
-            }
-
-            Console.WriteLine($"{"Index",-7}{"",-3}{"Name",-32}{"User",-35}{"Tenant"}");
+            var profiles = new JsonArray();
             for (var i = 0; i < file.Profiles.Count; i++)
             {
                 var p = file.Profiles[i];
-                var active = string.Equals(p.Name, file.Active, StringComparison.OrdinalIgnoreCase) ? "*" : "";
-                Console.WriteLine($"{i + 1,-7}{active,-3}{p.Name,-32}{p.Username,-35}{p.TenantId}");
+                profiles.Add(new JsonObject
+                {
+                    ["index"] = i + 1,
+                    ["active"] = IsActive(p, file),
+                    ["name"] = p.Name,
+                    ["user"] = p.Username,
+                    ["tenantId"] = p.TenantId,
+                    ["clientId"] = p.ClientId,
+                    ["cloud"] = p.Cloud
+                });
             }
-            return 0;
-        });
+            JsonOutput.Write(new JsonObject { ["profiles"] = profiles });
+            return ExitCodes.Success;
+        }
 
-        return list;
-    }
-
-    private static Command BuildWho()
-    {
-        var who = new Command("who", "Show the active authentication profile.");
-
-        who.SetAction(_ =>
+        if (file.Profiles.Count == 0)
         {
-            var active = ProfileStore.GetActive();
-            if (active is null)
-            {
-                Console.Error.WriteLine("No active profile. Run 'ppac auth create --deviceCode ...'.");
-                return 1;
-            }
+            Console.WriteLine("No profiles. Run 'ppac auth create --deviceCode --tenant <id> --applicationId <id>'.");
+            return ExitCodes.Success;
+        }
 
-            Console.WriteLine($"Profile:   {active.Name}");
-            Console.WriteLine($"User:      {active.Username}");
-            Console.WriteLine($"Tenant:    {active.TenantId}");
-            Console.WriteLine($"Client ID: {active.ClientId}");
-            Console.WriteLine($"Cloud:     {active.Cloud}");
-            return 0;
-        });
-
-        return who;
+        Console.WriteLine($"{"Index",-7}{"",-3}{"Name",-32}{"User",-35}{"Tenant"}");
+        for (var i = 0; i < file.Profiles.Count; i++)
+        {
+            var p = file.Profiles[i];
+            var active = IsActive(p, file) ? "*" : "";
+            Console.WriteLine($"{i + 1,-7}{active,-3}{p.Name,-32}{p.Username,-35}{p.TenantId}");
+        }
+        return ExitCodes.Success;
     }
+
+    private static int Who(CommandContext ctx)
+    {
+        var active = ProfileStore.GetActive();
+        if (active is null)
+        {
+            Console.Error.WriteLine("No active profile. Run 'ppac auth create --deviceCode ...'.");
+            return ExitCodes.Failure;
+        }
+
+        if (ctx.GetBool(JsonOutput.OptionName))
+        {
+            JsonOutput.Write(new JsonObject
+            {
+                ["profile"] = active.Name,
+                ["user"] = active.Username,
+                ["tenantId"] = active.TenantId,
+                ["clientId"] = active.ClientId,
+                ["cloud"] = active.Cloud
+            });
+            return ExitCodes.Success;
+        }
+
+        Console.WriteLine($"Profile:   {active.Name}");
+        Console.WriteLine($"User:      {active.Username}");
+        Console.WriteLine($"Tenant:    {active.TenantId}");
+        Console.WriteLine($"Client ID: {active.ClientId}");
+        Console.WriteLine($"Cloud:     {active.Cloud}");
+        return ExitCodes.Success;
+    }
+
+    private static bool IsActive(Profile profile, ProfileFile file) =>
+        string.Equals(profile.Name, file.Active, StringComparison.OrdinalIgnoreCase);
+
+    private static string Truncate(string value, int max) =>
+        value.Length <= max ? value : value[..max];
 }
