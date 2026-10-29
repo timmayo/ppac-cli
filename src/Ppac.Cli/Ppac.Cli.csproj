@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <AssemblyName>ppac</AssemblyName>
+    <RootNamespace>Ppac.Cli</RootNamespace>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>ppac</ToolCommandName>
+    <PackageId>Ppac.Cli</PackageId>
+    <PackageOutputPath>./nupkg</PackageOutputPath>
+    <Version>0.1.0</Version>
+    <Description>Command-line tool for Power Platform admin center (PPAC) tasks.</Description>
+  </PropertyGroup>
+
+</Project>
