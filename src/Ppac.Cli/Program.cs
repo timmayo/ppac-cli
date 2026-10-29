@@ -9,6 +9,7 @@ internal static class Program
     {
         var root = new RootCommand("ppac - Power Platform admin center CLI");
         root.Subcommands.Add(AuthCommands.Build());
+        root.Subcommands.Add(EnvironmentCommands.Build());
 
         // --help and --version are built into System.CommandLine.
         return root.Parse(args).InvokeAsync();

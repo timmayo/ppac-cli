@@ -29,6 +29,37 @@ public static class TokenProvider
         return app;
     }
 
+    /// <summary>
+    /// Gets an access token for the profile from the cache, refreshing silently if needed.
+    /// Throws MsalUiRequiredException when the user must sign in again.
+    /// </summary>
+    public static async Task<string> GetAccessTokenAsync(
+        Profile profile, CloudConfig cloud, CancellationToken cancellationToken)
+    {
+        var app = await CreateAppAsync(profile.TenantId, profile.ClientId, cloud);
+
+        IAccount? account = null;
+        if (profile.HomeAccountId is not null)
+        {
+            account = await app.GetAccountAsync(profile.HomeAccountId);
+        }
+        if (account is null)
+        {
+            var accounts = await app.GetAccountsAsync();
+            account = accounts.FirstOrDefault(a =>
+                string.Equals(a.Username, profile.Username, StringComparison.OrdinalIgnoreCase));
+        }
+        if (account is null)
+        {
+            throw new MsalUiRequiredException("no_account", "No cached account for this profile.");
+        }
+
+        var result = await app
+            .AcquireTokenSilent(new[] { cloud.ApiScope }, account)
+            .ExecuteAsync(cancellationToken);
+        return result.AccessToken;
+    }
+
     /// <summary>Signs in with the device code flow, printing the instructions MSAL provides.</summary>
     public static async Task<AuthenticationResult> SignInWithDeviceCodeAsync(
         IPublicClientApplication app, CloudConfig cloud, CancellationToken cancellationToken)
