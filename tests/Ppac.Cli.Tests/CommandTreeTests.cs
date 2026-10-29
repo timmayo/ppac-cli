@@ -26,7 +26,7 @@ public class CommandTreeTests
     [Theory]
     [InlineData("nonsense")]
     [InlineData("environment nonsense")]
-    [InlineData("environment get")]                       // --environment is required
+    [InlineData("environment get --select")]              // --select needs a value
     [InlineData("auth create --deviceCode")]              // --tenant and --applicationId are required
     [InlineData("environment list --top notanumber")]
     public void Invalid_command_lines_produce_parse_errors(string line)
@@ -41,6 +41,8 @@ public class CommandTreeTests
     [InlineData("auth list")]
     [InlineData("auth who --json")]
     [InlineData("environment list --top 3 --filter x --json")]
+    [InlineData("environment get")]                       // --environment is optional: lists the first 10
+    [InlineData("environment get --json")]
     [InlineData("environment get --environment abc --select displayName --json")]
     [InlineData("auth create --deviceCode --tenant t --applicationId a")]
     public void Valid_command_lines_parse_without_errors(string line)

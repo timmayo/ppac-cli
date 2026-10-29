@@ -13,6 +13,9 @@ public static class EnvironmentCommands
 {
     private const string ReadPermission = "EnvironmentManagement.Environments.Read";
 
+    // How many environments 'environment get' lists when --environment is omitted.
+    private const int DefaultListCount = 10;
+
     public static IEnumerable<CommandSpec> Specs()
     {
         yield return new CommandSpec
@@ -38,7 +41,7 @@ public static class EnvironmentCommands
         yield return new CommandSpec
         {
             Path = new[] { "environment", "get" },
-            Description = "Show the details of one environment.",
+            Description = "Show the details of one environment, or the first 10 environments when --environment is omitted.",
             Class = CommandClass.Read,
             Status = VerificationStatus.Verified,
             Preview = true,
@@ -47,9 +50,9 @@ public static class EnvironmentCommands
             Options = new[]
             {
                 new OptionSpec("--environment", Array.Empty<string>(), OptionType.String,
-                    "Environment ID, as shown by 'ppac environment list'.", Required: true),
+                    "Environment ID, as shown by 'ppac environment list'. When omitted, the first 10 environments are listed."),
                 new OptionSpec("--select", Array.Empty<string>(), OptionType.String,
-                    "Comma-separated list of properties to return, for example \"displayName,state,url\"."),
+                    "Comma-separated list of properties to return, for example \"displayName,state,url\". Only with --environment."),
                 JsonOutput.Option
             },
             Handler = GetAsync
@@ -84,7 +87,37 @@ public static class EnvironmentCommands
 
     private static Task<int> GetAsync(CommandContext ctx, CancellationToken cancellationToken)
     {
-        var environmentId = ctx.GetString("--environment")!;
+        var environmentId = ctx.GetString("--environment");
+        var select = ctx.GetString("--select");
+
+        // No --environment: fall back to the first DefaultListCount environments.
+        if (environmentId is null)
+        {
+            if (select is not null)
+            {
+                Console.Error.WriteLine("--select can only be used together with --environment.");
+                return Task.FromResult(ExitCodes.Usage);
+            }
+
+            return RunAsync(async (api, cloud) =>
+            {
+                var environments = await EnvironmentApi.ListAsync(
+                    api, cloud, null, DefaultListCount, cancellationToken);
+
+                if (ctx.GetBool(JsonOutput.OptionName))
+                {
+                    JsonOutput.Write(new JsonObject { ["value"] = environments });
+                }
+                else
+                {
+                    WriteTable(environments);
+                    Console.Error.WriteLine(
+                        $"Showing up to {DefaultListCount} environments. Use --environment <id> for one environment's details, or 'ppac environment list' for all.");
+                }
+                return ExitCodes.Success;
+            }, cancellationToken);
+        }
+
         if (string.IsNullOrWhiteSpace(environmentId))
         {
             Console.Error.WriteLine("--environment must not be empty.");
@@ -94,7 +127,7 @@ public static class EnvironmentCommands
         return RunAsync(async (api, cloud) =>
         {
             var environment = await EnvironmentApi.GetAsync(
-                api, cloud, environmentId.Trim(), ctx.GetString("--select"), cancellationToken);
+                api, cloud, environmentId.Trim(), select, cancellationToken);
 
             if (ctx.GetBool(JsonOutput.OptionName))
             {

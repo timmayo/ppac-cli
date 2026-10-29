@@ -98,6 +98,16 @@ public sealed class GlobalStateTests : IDisposable
     {
         Assert.Equal(ExitCodes.Failure, (await RunAsync("environment", "list")).ExitCode);
         Assert.Equal(ExitCodes.Failure, (await RunAsync("environment", "get", "--environment", "abc")).ExitCode);
+        Assert.Equal(ExitCodes.Failure, (await RunAsync("environment", "get")).ExitCode);
+    }
+
+    [Fact]
+    public async Task Environment_get_rejects_select_without_environment_with_exit_code_2()
+    {
+        var (exitCode, _, err) = await RunAsync("environment", "get", "--select", "displayName");
+
+        Assert.Equal(ExitCodes.Usage, exitCode);
+        Assert.Contains("--select", err);
     }
 
     [Fact]
