@@ -15,4 +15,8 @@ public static class JsonOutput
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static void Write(JsonNode node) => Console.WriteLine(node.ToJsonString(Options));
+
+    /// <summary>Reads a property as text, or null when it is missing or not a string.</summary>
+    public static string? Str(JsonNode? node, string name) =>
+        node?[name] is JsonValue value && value.TryGetValue<string>(out var s) ? s : null;
 }

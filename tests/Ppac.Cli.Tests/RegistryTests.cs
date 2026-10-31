@@ -91,6 +91,54 @@ public class RegistryTests
     }
 
     [Fact]
+    public void Commands_that_change_things_support_whatif_and_destructive_ones_support_yes()
+    {
+        // auth create is excluded: it is interactive and only writes the local profile store.
+        foreach (var spec in CommandRegistry.All.Where(s => s.Class != CommandClass.Read && !s.Interactive))
+        {
+            Assert.Contains(spec.Options, o => o.Name == "--whatif");
+
+            if (spec.Class == CommandClass.Destructive)
+            {
+                Assert.Contains(spec.Options, o => o.Name == "--yes");
+            }
+        }
+    }
+
+    [Fact]
+    public void Read_commands_and_non_destructive_commands_do_not_offer_yes_or_whatif_by_mistake()
+    {
+        foreach (var spec in CommandRegistry.All)
+        {
+            if (spec.Class == CommandClass.Read)
+            {
+                Assert.DoesNotContain(spec.Options, o => o.Name is "--whatif" or "--yes");
+            }
+            else if (spec.Class == CommandClass.Write)
+            {
+                Assert.DoesNotContain(spec.Options, o => o.Name == "--yes");
+            }
+        }
+    }
+
+    [Fact]
+    public void Backup_commands_are_registered_with_the_right_class_and_verified_live()
+    {
+        var backups = CommandRegistry.All.Where(s => s.Path.Take(2).SequenceEqual(new[] { "environment", "backup" })).ToList();
+
+        Assert.Equal(
+            new[] { "environment backup create", "environment backup delete", "environment backup list" },
+            backups.Select(s => s.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        Assert.Equal(CommandClass.Read, backups.Single(s => s.Path[^1] == "list").Class);
+        Assert.Equal(CommandClass.Write, backups.Single(s => s.Path[^1] == "create").Class);
+        Assert.Equal(CommandClass.Destructive, backups.Single(s => s.Path[^1] == "delete").Class);
+        Assert.All(backups, s => Assert.Equal(VerificationStatus.Verified, s.Status));
+        Assert.True(backups.Single(s => s.Path[^1] == "list").McpEligible);
+        Assert.False(backups.Single(s => s.Path[^1] == "create").McpEligible);
+        Assert.False(backups.Single(s => s.Path[^1] == "delete").McpEligible);
+    }
+
+    [Fact]
     public void Interactive_commands_are_never_mcp_eligible()
     {
         foreach (var spec in CommandRegistry.All.Where(s => s.Interactive))

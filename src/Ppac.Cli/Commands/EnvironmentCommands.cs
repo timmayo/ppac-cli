@@ -1,8 +1,5 @@
-using System.Net;
 using System.Text.Json.Nodes;
-using Microsoft.Identity.Client;
 using Ppac.Cli.Api;
-using Ppac.Cli.Auth;
 using Ppac.Cli.Config;
 using Ppac.Cli.Output;
 using Ppac.Cli.Registry;
@@ -141,61 +138,15 @@ public static class EnvironmentCommands
         }, cancellationToken);
     }
 
-    /// <summary>Signs in from the active profile, runs the call, and maps failures to exit codes.</summary>
-    private static async Task<int> RunAsync(
-        Func<PowerPlatformApi, CloudConfig, Task<int>> call, CancellationToken cancellationToken)
-    {
-        var profile = ProfileStore.GetActive();
-        if (profile is null)
-        {
-            Console.Error.WriteLine("No active profile. Run 'ppac auth create --deviceCode --tenant <id> --applicationId <id>'.");
-            return ExitCodes.Failure;
-        }
-
-        var cloud = CloudConfig.Get(profile.Cloud);
-
-        string token;
-        try
-        {
-            token = await TokenProvider.GetAccessTokenAsync(profile, cloud, cancellationToken);
-        }
-        catch (MsalUiRequiredException)
-        {
-            Console.Error.WriteLine("Your sign-in has expired or is missing. Run 'ppac auth create --deviceCode ...' again.");
-            return ExitCodes.Failure;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Could not get an access token: {ex.Message}");
-            return ExitCodes.Failure;
-        }
-
-        try
-        {
-            using var http = new HttpClient();
-            return await call(new PowerPlatformApi(http, token), cloud);
-        }
-        catch (ApiException ex)
-        {
-            Console.Error.WriteLine($"The request failed: {(int)ex.StatusCode} {ex.StatusCode}. {ex.Message}");
-            if (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            {
-                Console.Error.WriteLine(
-                    $"Check that the app registration has the delegated permission {ReadPermission} " +
-                    "with admin consent, and that the signed-in user has a Power Platform admin role.");
-            }
-            else if (ex.StatusCode == HttpStatusCode.NotFound)
-            {
-                Console.Error.WriteLine("Check the environment ID. 'ppac environment list' shows the IDs.");
-            }
-            return ExitCodes.Failure;
-        }
-        catch (HttpRequestException ex)
-        {
-            Console.Error.WriteLine($"Could not reach the Power Platform API: {ex.Message}");
-            return ExitCodes.Failure;
-        }
-    }
+    private static Task<int> RunAsync(
+        Func<PowerPlatformApi, CloudConfig, Task<int>> call, CancellationToken cancellationToken) =>
+        ApiCommandRunner.RunAsync(
+            call,
+            forbiddenHint:
+                $"Check that the app registration has the delegated permission {ReadPermission} " +
+                "with admin consent, and that the signed-in user has a Power Platform admin role.",
+            notFoundHint: "Check the environment ID. 'ppac environment list' shows the IDs.",
+            cancellationToken);
 
     private static void WriteTable(JsonArray environments)
     {

@@ -7,6 +7,7 @@ public static class CommandRegistry
 {
     public static readonly IReadOnlyList<CommandSpec> All = AuthCommands.Specs()
         .Concat(EnvironmentCommands.Specs())
+        .Concat(BackupCommands.Specs())
         .Concat(CommandsCommand.Specs())
         .ToList();
 
@@ -15,6 +16,7 @@ public static class CommandRegistry
         new Dictionary<string, string>
         {
             ["auth"] = "Manage authentication profiles.",
-            ["environment"] = "Manage Power Platform environments."
+            ["environment"] = "Manage Power Platform environments.",
+            ["environment backup"] = "Manage environment backups."
         };
 }

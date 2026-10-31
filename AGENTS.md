@@ -27,7 +27,11 @@ Fields that matter:
 - Authentication: run `ppac auth who` to check the active profile. If there is none, ask the
   person to run `ppac auth create --deviceCode --tenant <id> --applicationId <id>`.
   Never ask for or handle tokens or secrets; they stay in the profile store.
-- Commands that change anything will support `--whatif` (not implemented yet).
+- Commands that change anything support `--whatif`: it prints the exact request (`--json` gives
+  `{"whatIf": true, "request": {...}}`) and changes nothing. Run it first and show the person.
+- `destructive` commands ask for confirmation. When input is not interactive they refuse with exit
+  code `2` unless `--yes` is passed. Only pass `--yes` when the person has explicitly approved that
+  exact change, for example after showing them the `--whatif` output.
 
 ## Examples
 

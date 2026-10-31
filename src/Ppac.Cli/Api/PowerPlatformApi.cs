@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace Ppac.Cli.Api;
@@ -17,9 +19,32 @@ public sealed class PowerPlatformApi
 
     public async Task<JsonNode> GetJsonAsync(string url, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        var (status, body) = await SendCoreAsync(HttpMethod.Get, url, null, cancellationToken);
+
+        return JsonNode.Parse(body)
+            ?? throw new ApiException(status, "The service returned an empty response.", body);
+    }
+
+    /// <summary>
+    /// Sends a planned request. Returns the JSON response, or null when the response has no
+    /// body (for example 204 No Content). Throws ApiException for a non-success status.
+    /// </summary>
+    public async Task<JsonNode?> SendAsync(PlannedRequest request, CancellationToken cancellationToken)
+    {
+        var (_, body) = await SendCoreAsync(request.Method, request.Url, request.Body, cancellationToken);
+        return string.IsNullOrWhiteSpace(body) ? null : JsonNode.Parse(body);
+    }
+
+    private async Task<(HttpStatusCode Status, string Body)> SendCoreAsync(
+        HttpMethod method, string url, JsonNode? jsonBody, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (jsonBody is not null)
+        {
+            request.Content = new StringContent(jsonBody.ToJsonString(), Encoding.UTF8, "application/json");
+        }
 
         using var response = await _http.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -29,8 +54,7 @@ public sealed class PowerPlatformApi
             throw new ApiException(response.StatusCode, Describe(body), body);
         }
 
-        return JsonNode.Parse(body)
-            ?? throw new ApiException(response.StatusCode, "The service returned an empty response.", body);
+        return (response.StatusCode, body);
     }
 
     // The error body shape is not documented for this API, so look for a

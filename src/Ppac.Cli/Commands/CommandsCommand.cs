@@ -32,11 +32,11 @@ public static class CommandsCommand
             return ExitCodes.Success;
         }
 
-        Console.WriteLine($"{"Command",-24}{"Class",-13}{"Status",-16}{"MCP",-5}{"Description"}");
+        Console.WriteLine($"{"Command",-30}{"Class",-13}{"Status",-16}{"MCP",-5}{"Description"}");
         foreach (var s in specs)
         {
             Console.WriteLine(
-                $"{s.Name,-24}{ClassName(s.Class),-13}{StatusName(s.Status),-16}{(s.McpEligible ? "yes" : "no"),-5}{s.Description}");
+                $"{s.Name,-30}{ClassName(s.Class),-13}{StatusName(s.Status),-16}{(s.McpEligible ? "yes" : "no"),-5}{s.Description}");
         }
         return ExitCodes.Success;
     }
