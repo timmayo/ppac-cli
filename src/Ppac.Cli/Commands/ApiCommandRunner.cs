@@ -90,5 +90,11 @@ public static class ApiCommandRunner
             return ErrorReport.Write(
                 ExitCodes.Retryable, $"Could not reach the Power Platform API: {ex.Message}", json);
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Never show a stack trace to an admin: report it as a failure with the message.
+            return ErrorReport.Write(
+                ExitCodes.Failure, $"Unexpected error ({ex.GetType().Name}): {ex.Message}", json);
+        }
     }
 }

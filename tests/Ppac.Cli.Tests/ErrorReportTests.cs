@@ -57,6 +57,30 @@ public class ExitCodeMappingTests
         Assert.Equal("Label is too long.", ex.Message);
     }
 
+    [Theory]
+    [InlineData("\"A group with this name already exists.\"", "A group with this name already exists.")]
+    [InlineData("{\"error\":\"Name taken.\"}", "Name taken.")]
+    [InlineData("{\"message\":\"Name taken.\"}", "Name taken.")]
+    [InlineData("{\"error\":{\"message\":\"Not allowed.\"}}", "Not allowed.")]
+    [InlineData("{\"errorDetail\":{\"code\":\"Conflict\"}}", "Conflict")]
+    [InlineData("{\"errorDetail\":{\"fieldErrors\":{\"a\":{\"errorMessages\":[\"x\",\"y\"]},\"b\":{}}}}", "a: x y; b: invalid")]
+    [InlineData("{\"errorDetail\":{}}", "{\"errorDetail\":{}}")]
+    [InlineData("[\"a\",\"b\"]", "[\"a\",\"b\"]")]
+    [InlineData("123", "123")]
+    [InlineData("null", "null")]
+    [InlineData("not json at all", "not json at all")]
+    public async Task Error_bodies_of_any_json_shape_never_crash_and_give_a_message(string body, string expected)
+    {
+        var handler = new FakeHandler(_ => (HttpStatusCode.BadRequest, body));
+        var api = new PowerPlatformApi(new HttpClient(handler), "t");
+
+        var ex = await Assert.ThrowsAsync<ApiException>(
+            () => api.SendAsync(new PlannedRequest(HttpMethod.Post, "https://example.test/x"), CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadRequest, ex.StatusCode);
+        Assert.Equal(expected, ex.Message);
+    }
+
     [Fact]
     public async Task Problem_details_title_is_used_when_there_is_no_detail()
     {

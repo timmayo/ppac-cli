@@ -9,6 +9,9 @@ public static class CommandRegistry
         .Concat(EnvironmentCommands.Specs())
         .Concat(BackupCommands.Specs())
         .Concat(EnvironmentGroupCommands.Specs())
+        .Concat(EnvironmentGroupWriteCommands.Specs())
+        .Concat(EnvironmentManagedCommands.Specs())
+        .Concat(OperationCommands.Specs())
         .Concat(CommandsCommand.Specs())
         .ToList();
 
@@ -19,6 +22,9 @@ public static class CommandRegistry
             ["auth"] = "Manage authentication profiles.",
             ["environment"] = "Manage Power Platform environments.",
             ["environment backup"] = "Manage environment backups.",
-            ["environment group"] = "Manage environment groups."
+            ["environment group"] = "Manage environment groups.",
+            ["environment managed"] = "Turn Managed Environments on or off for an environment.",
+            ["environment operation"] = "Check the status of an environment operation.",
+            ["environment group operation"] = "Check the status of an environment group operation."
         };
 }

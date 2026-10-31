@@ -141,13 +141,37 @@ public class RegistryTests
     [Fact]
     public void Group_commands_are_read_only_and_name_their_documented_permission()
     {
-        var groups = CommandRegistry.All.Where(s => s.Path.Take(2).SequenceEqual(new[] { "environment", "group" })).ToList();
+        var groups = CommandRegistry.All
+            .Where(s => s.Path.Take(2).SequenceEqual(new[] { "environment", "group" }) && s.Class == CommandClass.Read &&
+                        !s.Path.Contains("operation")) // operation status has no documented permission; see OperationCommandTests
+            .ToList();
 
         Assert.Equal(
             new[] { "environment group get", "environment group list" },
             groups.Select(s => s.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
         Assert.All(groups, s => Assert.Equal(CommandClass.Read, s.Class));
         Assert.All(groups, s => Assert.Equal("EnvironmentManagement.Groups.Read", s.Permission));
+        Assert.All(groups, s => Assert.Equal(VerificationStatus.Verified, s.Status));
+        Assert.All(groups, s => Assert.True(s.McpEligible, s.Name));
+    }
+
+    [Fact]
+    public void Group_write_commands_use_the_safety_options_and_name_their_permission()
+    {
+        var create = CommandRegistry.All.Single(s => s.Name == "environment group create");
+        var delete = CommandRegistry.All.Single(s => s.Name == "environment group delete");
+
+        Assert.Equal(CommandClass.Write, create.Class);
+        Assert.Equal(CommandClass.Destructive, delete.Class);
+        Assert.All(new[] { create, delete }, s => Assert.Equal("EnvironmentManagement.Groups.ReadWrite", s.Permission));
+        Assert.All(new[] { create, delete }, s => Assert.False(s.McpEligible, s.Name));
+        Assert.All(new[] { create, delete }, s => Assert.Equal(VerificationStatus.Verified, s.Status));
+        Assert.Contains(create.Options, o => o.Name == "--whatif");
+        Assert.DoesNotContain(create.Options, o => o.Name == "--yes");
+        Assert.Contains(delete.Options, o => o.Name == "--whatif");
+        Assert.Contains(delete.Options, o => o.Name == "--yes");
+        Assert.True(create.Options.Single(o => o.Name == "--name").Required);
+        Assert.True(delete.Options.Single(o => o.Name == "--group").Required);
     }
 
     [Fact]

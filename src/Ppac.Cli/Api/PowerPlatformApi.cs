@@ -5,6 +5,12 @@ using System.Text.Json.Nodes;
 
 namespace Ppac.Cli.Api;
 
+/// <summary>A successful response: status, headers (names are case-insensitive) and the JSON body, or null when there is none.</summary>
+public sealed record ApiResponse(HttpStatusCode Status, IReadOnlyDictionary<string, string> Headers, JsonNode? Body)
+{
+    public string? Header(string name) => Headers.TryGetValue(name, out var value) ? value : null;
+}
+
 /// <summary>Minimal authenticated JSON client for the Power Platform API.</summary>
 public sealed class PowerPlatformApi
 {
@@ -19,7 +25,7 @@ public sealed class PowerPlatformApi
 
     public async Task<JsonNode> GetJsonAsync(string url, CancellationToken cancellationToken)
     {
-        var (status, body) = await SendCoreAsync(HttpMethod.Get, url, null, cancellationToken);
+        var (status, body, _) = await SendCoreAsync(HttpMethod.Get, url, null, cancellationToken);
 
         return JsonNode.Parse(body)
             ?? throw new ApiException(status, "The service returned an empty response.", body);
@@ -31,11 +37,21 @@ public sealed class PowerPlatformApi
     /// </summary>
     public async Task<JsonNode?> SendAsync(PlannedRequest request, CancellationToken cancellationToken)
     {
-        var (_, body) = await SendCoreAsync(request.Method, request.Url, request.Body, cancellationToken);
+        var (_, body, _) = await SendCoreAsync(request.Method, request.Url, request.Body, cancellationToken);
         return string.IsNullOrWhiteSpace(body) ? null : JsonNode.Parse(body);
     }
 
-    private async Task<(HttpStatusCode Status, string Body)> SendCoreAsync(
+    /// <summary>
+    /// Like SendAsync, but also returns the status code and response headers. Needed for calls that
+    /// answer 202 Accepted, where the headers may point at the operation.
+    /// </summary>
+    public async Task<ApiResponse> SendDetailedAsync(PlannedRequest request, CancellationToken cancellationToken)
+    {
+        var (status, body, headers) = await SendCoreAsync(request.Method, request.Url, request.Body, cancellationToken);
+        return new ApiResponse(status, headers, string.IsNullOrWhiteSpace(body) ? null : JsonNode.Parse(body));
+    }
+
+    private async Task<(HttpStatusCode Status, string Body, IReadOnlyDictionary<string, string> Headers)> SendCoreAsync(
         HttpMethod method, string url, JsonNode? jsonBody, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(method, url);
@@ -54,7 +70,13 @@ public sealed class PowerPlatformApi
             throw new ApiException(response.StatusCode, Describe(body), body);
         }
 
-        return (response.StatusCode, body);
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var header in response.Headers.Concat(response.Content.Headers))
+        {
+            headers[header.Key] = string.Join(", ", header.Value);
+        }
+
+        return (response.StatusCode, body, headers);
     }
 
     // Documented error body: ProblemDetails (RFC 7807: type, title, status, detail, instance, extensions).
@@ -70,12 +92,29 @@ public sealed class PowerPlatformApi
         try
         {
             var node = JsonNode.Parse(body);
-            foreach (var candidate in new[] { node?["detail"], node?["title"], node?["error"]?["message"] })
+
+            // A bare JSON string is the message itself (seen live: a rejected duplicate group name).
+            if (Text(node) is { } plain)
             {
-                if (candidate is JsonValue value && value.TryGetValue<string>(out var text) &&
-                    !string.IsNullOrWhiteSpace(text))
+                return plain;
+            }
+
+            // Only an object has named properties; an array, number or null body falls through to the raw text.
+            if (node is JsonObject obj)
+            {
+                // ValidationResponse (managed governance and similar): { errorDetail: { code, fieldErrors: { name: { errorMessages, suggestedValue } } } }
+                if (obj["errorDetail"] is JsonObject validation && ValidationText(validation) is { } validationText)
                 {
-                    return text;
+                    return validationText;
+                }
+
+                var error = obj["error"] as JsonObject;
+                foreach (var candidate in new[] { obj["detail"], obj["title"], error?["message"], obj["error"], obj["message"] })
+                {
+                    if (Text(candidate) is { } text)
+                    {
+                        return text;
+                    }
                 }
             }
         }
@@ -86,4 +125,37 @@ public sealed class PowerPlatformApi
 
         return body.Length <= 300 ? body : body[..300] + "...";
     }
+
+    private static string? ValidationText(JsonObject detail)
+    {
+        var parts = new List<string>();
+        if (Text(detail["code"]) is { } code)
+        {
+            parts.Add(code);
+        }
+
+        if (detail["fieldErrors"] is JsonObject fields)
+        {
+            foreach (var (field, value) in fields)
+            {
+                var messages = (value?["errorMessages"] as JsonArray)?
+                    .Select(Text)
+                    .Where(m => m is not null)
+                    .ToList() ?? new List<string?>();
+                var text = messages.Count > 0 ? string.Join(" ", messages) : "invalid";
+                if (Text(value?["suggestedValue"]) is { } suggested)
+                {
+                    text += $" (suggested value: {suggested})";
+                }
+                parts.Add($"{field}: {text}");
+            }
+        }
+
+        return parts.Count == 0 ? null : string.Join("; ", parts);
+    }
+
+    private static string? Text(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)
+            ? text
+            : null;
 }
