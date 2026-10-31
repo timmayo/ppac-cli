@@ -38,6 +38,9 @@ public class CommandTreeTests
     [InlineData("environment backup list --environment e --yes")]        // --yes is only for destructive commands
     [InlineData("environment backup create --environment e --label x --yes")]
     [InlineData("environment list --whatif")]             // --whatif is only for commands that change things
+    [InlineData("environment group")]                     // a group, not a command
+    [InlineData("environment group list --top notanumber")]
+    [InlineData("environment group get --group")]         // --group needs a value
     public void Invalid_command_lines_produce_parse_errors(string line)
     {
         var result = Root().Parse(line.Split(' '));
@@ -61,6 +64,11 @@ public class CommandTreeTests
     [InlineData("environment backup delete --environment e --backup b")]
     [InlineData("environment backup delete --environment e --backup b --whatif")]
     [InlineData("environment backup delete --environment e --backup b --yes --json")]
+    [InlineData("environment group list")]
+    [InlineData("environment group list --top 5 --json")]
+    [InlineData("environment group get")]                 // --group is optional: lists the first 10
+    [InlineData("environment group get --json")]
+    [InlineData("environment group get --group g1 --json")]
     public void Valid_command_lines_parse_without_errors(string line)
     {
         var result = Root().Parse(line.Split(' '));

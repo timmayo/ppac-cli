@@ -139,6 +139,30 @@ public class RegistryTests
     }
 
     [Fact]
+    public void Group_commands_are_read_only_and_name_their_documented_permission()
+    {
+        var groups = CommandRegistry.All.Where(s => s.Path.Take(2).SequenceEqual(new[] { "environment", "group" })).ToList();
+
+        Assert.Equal(
+            new[] { "environment group get", "environment group list" },
+            groups.Select(s => s.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        Assert.All(groups, s => Assert.Equal(CommandClass.Read, s.Class));
+        Assert.All(groups, s => Assert.Equal("EnvironmentManagement.Groups.Read", s.Permission));
+    }
+
+    [Fact]
+    public void Read_commands_do_not_require_options_that_have_a_sensible_default()
+    {
+        // list/get style commands must work with no arguments (top N, or everything).
+        var optionalTargets = new[] { "environment list", "environment get", "environment group list", "environment group get" };
+        foreach (var name in optionalTargets)
+        {
+            var spec = CommandRegistry.All.Single(s => s.Name == name);
+            Assert.DoesNotContain(spec.Options, o => o.Required);
+        }
+    }
+
+    [Fact]
     public void Interactive_commands_are_never_mcp_eligible()
     {
         foreach (var spec in CommandRegistry.All.Where(s => s.Interactive))
