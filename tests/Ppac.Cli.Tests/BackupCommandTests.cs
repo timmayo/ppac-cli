@@ -153,7 +153,7 @@ public sealed class BackupCommandTests : IDisposable
 
         var exitCode = await Delete(handler, interactive: true, answer: "n");
 
-        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal(ExitCodes.Declined, exitCode);
         Assert.Equal(0, DeleteCount(handler));
         var prompt = _err.ToString();
         Assert.Contains("'ppac-test2'", prompt);
@@ -169,7 +169,7 @@ public sealed class BackupCommandTests : IDisposable
     {
         var handler = Service();
 
-        Assert.Equal(ExitCodes.Failure, await Delete(handler, interactive: true, answer: answer));
+        Assert.Equal(ExitCodes.Declined, await Delete(handler, interactive: true, answer: answer));
         Assert.Equal(0, DeleteCount(handler));
     }
 
@@ -215,7 +215,7 @@ public sealed class BackupCommandTests : IDisposable
 
         var exitCode = await RunCli("environment", "backup", "delete", "--environment", "env1", "--backup", "b1", "--yes");
 
-        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal(ExitCodes.AuthRequired, exitCode);
         Assert.Contains("No active profile", _err.ToString());
     }
 
@@ -228,20 +228,23 @@ public sealed class BackupCommandTests : IDisposable
 
         var exitCode = await Delete(handler, yes: true);
 
-        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal(ExitCodes.NotFound, exitCode);
         Assert.Equal(0, DeleteCount(handler));
         Assert.Contains("was not found", _err.ToString());
     }
 
     [Fact]
-    public async Task Delete_whatif_of_an_unknown_backup_reports_it_in_json_and_fails()
+    public async Task Delete_whatif_of_an_unknown_backup_reports_a_json_error_and_exits_4()
     {
         var handler = Service("{\"collection\":[]}");
 
         var exitCode = await Delete(handler, whatIf: true, json: true);
 
-        Assert.Equal(ExitCodes.Failure, exitCode);
-        Assert.Equal("notFound", JsonNode.Parse(_out.ToString())!["details"]!["lookup"]!.ToString());
+        Assert.Equal(ExitCodes.NotFound, exitCode);
+        var error = JsonNode.Parse(_out.ToString())!["error"]!;
+        Assert.Equal(4, (int)error["exitCode"]!);
+        Assert.Equal("notFound", error["details"]!["lookup"]!.ToString());
+        Assert.True((bool)error["details"]!["whatIf"]!);
     }
 
     [Fact]
@@ -310,8 +313,19 @@ public sealed class BackupCommandTests : IDisposable
     {
         var exitCode = await RunCli("environment", "backup", "create", "--environment", "env1", "--label", "x");
 
-        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal(ExitCodes.AuthRequired, exitCode);
         Assert.Contains("No active profile", _err.ToString());
+    }
+
+    [Fact]
+    public async Task Json_mode_reports_a_missing_profile_as_a_json_error()
+    {
+        var exitCode = await RunCli("environment", "backup", "list", "--environment", "env1", "--json");
+
+        Assert.Equal(ExitCodes.AuthRequired, exitCode);
+        var error = JsonNode.Parse(_out.ToString())!["error"]!;
+        Assert.Equal(3, (int)error["exitCode"]!);
+        Assert.Contains("No active profile", error["detail"]!.ToString());
     }
 
     [Fact]

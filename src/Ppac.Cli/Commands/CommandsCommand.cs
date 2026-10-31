@@ -82,14 +82,19 @@ public static class CommandsCommand
         {
             ["tool"] = "ppac",
             ["version"] = version,
-            ["exitCodes"] = new JsonObject
-            {
-                [ExitCodes.Success.ToString()] = "success",
-                [ExitCodes.Failure.ToString()] = "the command ran but failed",
-                [ExitCodes.Usage.ToString()] = "invalid command line"
-            },
+            ["exitCodes"] = ExitCodeTable(),
             ["commands"] = commands
         };
+    }
+
+    private static JsonObject ExitCodeTable()
+    {
+        var table = new JsonObject();
+        foreach (var code in ExitCodes.All)
+        {
+            table[code.ToString()] = ExitCodes.Describe(code);
+        }
+        return table;
     }
 
     private static string ClassName(CommandClass value) => value.ToString().ToLowerInvariant();

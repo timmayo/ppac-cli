@@ -93,6 +93,7 @@ public static class BackupCommands
         var json = ctx.GetBool(JsonOutput.OptionName);
         return RunAsync(
             (api, cloud) => ListCoreAsync(api, cloud, environmentId!.Trim(), json, cancellationToken),
+            json,
             cancellationToken);
     }
 
@@ -155,6 +156,7 @@ public static class BackupCommands
 
         return RunAsync(
             (api, cloud) => CreateCoreAsync(api, cloud, environmentId, label!, json, cancellationToken),
+            json,
             cancellationToken);
     }
 
@@ -206,6 +208,7 @@ public static class BackupCommands
             (api, cloud) => DeleteCoreAsync(
                 api, cloud, environmentId!.Trim(), backupId!.Trim(),
                 whatIf, yes, json, interactive, Console.In, cancellationToken),
+            json,
             cancellationToken);
     }
 
@@ -234,18 +237,9 @@ public static class BackupCommands
         {
             var message = $"Backup {backupId} was not found in {environmentText}. " +
                           "'ppac environment backup list --environment <id>' shows the backups.";
-            if (whatIf && json)
-            {
-                JsonOutput.Write(new JsonObject
-                {
-                    ["whatIf"] = true,
-                    ["command"] = "environment backup delete",
-                    ["summary"] = message,
-                    ["details"] = new JsonObject { ["lookup"] = "notFound" }
-                });
-            }
-            Console.Error.WriteLine(message);
-            return ExitCodes.Failure;
+            return ErrorReport.Write(
+                ExitCodes.NotFound, message, json,
+                details: new JsonObject { ["lookup"] = "notFound", ["whatIf"] = whatIf });
         }
 
         var summary = $"delete {backupText} from {environmentText}.";
@@ -281,8 +275,7 @@ public static class BackupCommands
                 WriteSafety.WriteRefusal("Deleting a backup");
                 return ExitCodes.Usage;
             case ConfirmResult.Declined:
-                Console.Error.WriteLine("Cancelled. Nothing was deleted.");
-                return ExitCodes.Failure;
+                return ErrorReport.Write(ExitCodes.Declined, "Cancelled. Nothing was deleted.", json);
         }
 
         await api.SendAsync(request, cancellationToken);
@@ -306,8 +299,8 @@ public static class BackupCommands
     // ---- helpers ----
 
     private static Task<int> RunAsync(
-        Func<PowerPlatformApi, CloudConfig, Task<int>> call, CancellationToken cancellationToken) =>
-        ApiCommandRunner.RunAsync(call, ForbiddenHint, NotFoundHint, cancellationToken);
+        Func<PowerPlatformApi, CloudConfig, Task<int>> call, bool json, CancellationToken cancellationToken) =>
+        ApiCommandRunner.RunAsync(call, ForbiddenHint, NotFoundHint, cancellationToken, json);
 
     private static bool IsPresent(string? value, string optionName)
     {

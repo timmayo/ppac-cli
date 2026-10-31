@@ -85,20 +85,20 @@ public sealed class GlobalStateTests : IDisposable
     }
 
     [Fact]
-    public async Task Auth_who_without_a_profile_fails_with_exit_code_1()
+    public async Task Auth_who_without_a_profile_fails_with_exit_code_3()
     {
         var (exitCode, _, err) = await RunAsync("auth", "who");
 
-        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal(ExitCodes.AuthRequired, exitCode);
         Assert.Contains("No active profile", err);
     }
 
     [Fact]
-    public async Task Environment_list_and_get_without_a_profile_fail_with_exit_code_1()
+    public async Task Environment_list_and_get_without_a_profile_fail_with_exit_code_3()
     {
-        Assert.Equal(ExitCodes.Failure, (await RunAsync("environment", "list")).ExitCode);
-        Assert.Equal(ExitCodes.Failure, (await RunAsync("environment", "get", "--environment", "abc")).ExitCode);
-        Assert.Equal(ExitCodes.Failure, (await RunAsync("environment", "get")).ExitCode);
+        Assert.Equal(ExitCodes.AuthRequired, (await RunAsync("environment", "list")).ExitCode);
+        Assert.Equal(ExitCodes.AuthRequired, (await RunAsync("environment", "get", "--environment", "abc")).ExitCode);
+        Assert.Equal(ExitCodes.AuthRequired, (await RunAsync("environment", "get")).ExitCode);
     }
 
     [Fact]
@@ -167,6 +167,10 @@ public sealed class GlobalStateTests : IDisposable
         var json = JsonNode.Parse(output)!;
         Assert.Equal("ppac", json["tool"]!.ToString());
         Assert.NotNull(json["exitCodes"]);
+        foreach (var code in ExitCodes.All)
+        {
+            Assert.NotNull(json["exitCodes"]![code.ToString()]);
+        }
 
         var commands = json["commands"]!.AsArray();
         Assert.Equal(CommandRegistry.All.Count, commands.Count);

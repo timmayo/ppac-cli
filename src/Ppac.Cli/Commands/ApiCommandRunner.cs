@@ -3,6 +3,7 @@ using Microsoft.Identity.Client;
 using Ppac.Cli.Api;
 using Ppac.Cli.Auth;
 using Ppac.Cli.Config;
+using Ppac.Cli.Output;
 using Ppac.Cli.Registry;
 
 namespace Ppac.Cli.Commands;
@@ -16,17 +17,21 @@ public static class ApiCommandRunner
     /// <param name="call">The work to do once signed in.</param>
     /// <param name="forbiddenHint">Printed after a 401/403: what to check (permission, role).</param>
     /// <param name="notFoundHint">Printed after a 404: what to check.</param>
+    /// <param name="json">When true, failures also write a JSON error object to stdout (see ErrorReport).</param>
     public static async Task<int> RunAsync(
         Func<PowerPlatformApi, CloudConfig, Task<int>> call,
         string forbiddenHint,
         string notFoundHint,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool json = false)
     {
         var profile = ProfileStore.GetActive();
         if (profile is null)
         {
-            Console.Error.WriteLine("No active profile. Run 'ppac auth create --deviceCode --tenant <id> --applicationId <id>'.");
-            return ExitCodes.Failure;
+            return ErrorReport.Write(
+                ExitCodes.AuthRequired,
+                "No active profile. Run 'ppac auth create --deviceCode --tenant <id> --applicationId <id>'.",
+                json);
         }
 
         var cloud = CloudConfig.Get(profile.Cloud);
@@ -38,13 +43,20 @@ public static class ApiCommandRunner
         }
         catch (MsalUiRequiredException)
         {
-            Console.Error.WriteLine("Your sign-in has expired or is missing. Run 'ppac auth create --deviceCode ...' again.");
-            return ExitCodes.Failure;
+            return ErrorReport.Write(
+                ExitCodes.AuthRequired,
+                "Your sign-in has expired or is missing. Run 'ppac auth create --deviceCode ...' again.",
+                json);
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is MsalClientException { ErrorCode: "http_request_failed" })
+        {
+            return ErrorReport.Write(
+                ExitCodes.Retryable, $"Could not reach the sign-in service: {ex.Message}", json);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Could not get an access token: {ex.Message}");
-            return ExitCodes.Failure;
+            return ErrorReport.Write(
+                ExitCodes.AuthRequired, $"Could not get an access token: {ex.Message}", json);
         }
 
         try
@@ -54,25 +66,29 @@ public static class ApiCommandRunner
         }
         catch (ApiException ex)
         {
-            Console.Error.WriteLine($"The request failed: {(int)ex.StatusCode} {ex.StatusCode}. {ex.Message}");
-            if (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            var status = (int)ex.StatusCode;
+            var title = ErrorReport.StatusTitle(ex.StatusCode);
+            var hint = ex.StatusCode switch
             {
-                Console.Error.WriteLine(forbiddenHint);
-            }
-            else if (ex.StatusCode == HttpStatusCode.NotFound)
-            {
-                Console.Error.WriteLine(notFoundHint);
-            }
-            else if (ex.StatusCode == HttpStatusCode.TooManyRequests)
-            {
-                Console.Error.WriteLine("The service is limiting requests. Wait a little and run the command again.");
-            }
-            return ExitCodes.Failure;
+                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => forbiddenHint,
+                HttpStatusCode.NotFound => notFoundHint,
+                HttpStatusCode.TooManyRequests =>
+                    "The service is limiting requests. Wait a little and run the command again.",
+                _ => null
+            };
+            return ErrorReport.Write(
+                ExitCodes.ForStatus(ex.StatusCode),
+                $"The request failed: {status} {title}. {ex.Message}",
+                json,
+                status,
+                title,
+                hint,
+                detail: ex.Message);
         }
         catch (HttpRequestException ex)
         {
-            Console.Error.WriteLine($"Could not reach the Power Platform API: {ex.Message}");
-            return ExitCodes.Failure;
+            return ErrorReport.Write(
+                ExitCodes.Retryable, $"Could not reach the Power Platform API: {ex.Message}", json);
         }
     }
 }

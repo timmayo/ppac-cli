@@ -23,7 +23,8 @@ Fields that matter:
 ## Conventions
 
 - Add `--json` to get machine-readable output on stdout. Errors go to stderr.
-- Exit codes: `0` success, `1` the command ran but failed, `2` invalid command line.
+- Exit codes: `0` success, `1` ran but failed (for example a 400), `2` invalid command line, `3` not signed in or access refused (401/403; do not retry), `4` not found, `5` temporary failure (429, 5xx, network; retrying may work), `6` declined at the confirmation prompt (nothing changed). `ppac commands --json` lists them.
+- With `--json`, a failure also writes `{"error":{"exitCode":3,"status":403,"title":"Forbidden","detail":"...","hint":"..."}}` to stdout; human text still goes to stderr.
 - Authentication: run `ppac auth who` to check the active profile. If there is none, ask the
   person to run `ppac auth create --deviceCode --tenant <id> --applicationId <id>`.
   Never ask for or handle tokens or secrets; they stay in the profile store.

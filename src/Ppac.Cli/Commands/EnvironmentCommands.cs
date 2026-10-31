@@ -79,7 +79,7 @@ public static class EnvironmentCommands
                 WriteTable(environments);
             }
             return ExitCodes.Success;
-        }, cancellationToken);
+        }, ctx.GetBool(JsonOutput.OptionName), cancellationToken);
     }
 
     private static Task<int> GetAsync(CommandContext ctx, CancellationToken cancellationToken)
@@ -112,7 +112,7 @@ public static class EnvironmentCommands
                         $"Showing up to {DefaultListCount} environments. Use --environment <id> for one environment's details, or 'ppac environment list' for all.");
                 }
                 return ExitCodes.Success;
-            }, cancellationToken);
+            }, ctx.GetBool(JsonOutput.OptionName), cancellationToken);
         }
 
         if (string.IsNullOrWhiteSpace(environmentId))
@@ -135,18 +135,19 @@ public static class EnvironmentCommands
                 WriteDetails(environment);
             }
             return ExitCodes.Success;
-        }, cancellationToken);
+        }, ctx.GetBool(JsonOutput.OptionName), cancellationToken);
     }
 
     private static Task<int> RunAsync(
-        Func<PowerPlatformApi, CloudConfig, Task<int>> call, CancellationToken cancellationToken) =>
+        Func<PowerPlatformApi, CloudConfig, Task<int>> call, bool json, CancellationToken cancellationToken) =>
         ApiCommandRunner.RunAsync(
             call,
             forbiddenHint:
                 $"Check that the app registration has the delegated permission {ReadPermission} " +
                 "with admin consent, and that the signed-in user has a Power Platform admin role.",
             notFoundHint: "Check the environment ID. 'ppac environment list' shows the IDs.",
-            cancellationToken);
+            cancellationToken,
+            json);
 
     private static void WriteTable(JsonArray environments)
     {

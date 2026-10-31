@@ -129,7 +129,7 @@ public static class AuthCommands
         catch (MsalServiceException ex)
         {
             Console.Error.WriteLine($"Sign-in failed ({ex.ErrorCode}): {ex.Message}");
-            return ExitCodes.Failure;
+            return ExitCodes.AuthRequired;
         }
         catch (OperationCanceledException)
         {
@@ -189,8 +189,10 @@ public static class AuthCommands
         var active = ProfileStore.GetActive();
         if (active is null)
         {
-            Console.Error.WriteLine("No active profile. Run 'ppac auth create --deviceCode ...'.");
-            return ExitCodes.Failure;
+            return ErrorReport.Write(
+                ExitCodes.AuthRequired,
+                "No active profile. Run 'ppac auth create --deviceCode ...'.",
+                ctx.GetBool(JsonOutput.OptionName));
         }
 
         if (ctx.GetBool(JsonOutput.OptionName))

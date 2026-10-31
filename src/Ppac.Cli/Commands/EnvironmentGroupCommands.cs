@@ -9,7 +9,8 @@ namespace Ppac.Cli.Commands;
 /// <summary>
 /// 'ppac environment group list | get'. Source: Environment Management API, environment groups
 /// (api-version 2024-10-01). The reference pages list only the .default scope; the permission
-/// reference names EnvironmentManagement.Groups.Read. Unverified until run live.
+/// reference names EnvironmentManagement.Groups.Read. Verified live 2026-10-30: list returned the
+/// tenant's groups, get returned one group, and an unknown group ID returned 204 No Content.
 /// </summary>
 public static class EnvironmentGroupCommands
 {
@@ -25,7 +26,7 @@ public static class EnvironmentGroupCommands
             Path = new[] { "environment", "group", "list" },
             Description = "List the environment groups in the tenant.",
             Class = CommandClass.Read,
-            Status = VerificationStatus.Unverified,
+            Status = VerificationStatus.Verified,
             Api = $"GET /environmentmanagement/environmentGroups?api-version={EnvironmentGroupApi.ApiVersion}",
             Permission = ReadPermission,
             Options = new[]
@@ -42,7 +43,7 @@ public static class EnvironmentGroupCommands
             Path = new[] { "environment", "group", "get" },
             Description = "Show one environment group, or the first 10 groups when --group is omitted.",
             Class = CommandClass.Read,
-            Status = VerificationStatus.Unverified,
+            Status = VerificationStatus.Verified,
             Api = $"GET /environmentmanagement/environmentGroups/{{groupId}}?api-version={EnvironmentGroupApi.ApiVersion}",
             Permission = ReadPermission,
             Options = new[]
@@ -65,7 +66,7 @@ public static class EnvironmentGroupCommands
         }
 
         var json = ctx.GetBool(JsonOutput.OptionName);
-        return RunAsync((api, cloud) => ListCoreAsync(api, cloud, top, json, cancellationToken), cancellationToken);
+        return RunAsync((api, cloud) => ListCoreAsync(api, cloud, top, json, cancellationToken), json, cancellationToken);
     }
 
     private static Task<int> GetAsync(CommandContext ctx, CancellationToken cancellationToken)
@@ -80,6 +81,7 @@ public static class EnvironmentGroupCommands
         var json = ctx.GetBool(JsonOutput.OptionName);
         return RunAsync(
             (api, cloud) => GetCoreAsync(api, cloud, groupId?.Trim(), json, cancellationToken),
+            json,
             cancellationToken);
     }
 
@@ -123,8 +125,12 @@ public static class EnvironmentGroupCommands
         var group = await EnvironmentGroupApi.GetAsync(api, cloud, groupId, cancellationToken);
         if (group is null)
         {
-            Console.Error.WriteLine($"The service returned no content for group {groupId}. 'ppac environment group list' shows the group IDs.");
-            return ExitCodes.Failure;
+            return ErrorReport.Write(
+                ExitCodes.NotFound,
+                $"The service returned no content for group {groupId}. 'ppac environment group list' shows the group IDs.",
+                json,
+                status: 204,
+                title: "No Content");
         }
 
         if (json)
@@ -139,7 +145,7 @@ public static class EnvironmentGroupCommands
     }
 
     private static Task<int> RunAsync(
-        Func<PowerPlatformApi, CloudConfig, Task<int>> call, CancellationToken cancellationToken) =>
+        Func<PowerPlatformApi, CloudConfig, Task<int>> call, bool json, CancellationToken cancellationToken) =>
         ApiCommandRunner.RunAsync(
             call,
             forbiddenHint:
@@ -147,7 +153,8 @@ public static class EnvironmentGroupCommands
                 "with admin consent, that you signed in again after adding it ('ppac auth create'), " +
                 "and that the signed-in user has a Power Platform admin role.",
             notFoundHint: "Check the group ID. 'ppac environment group list' shows the IDs.",
-            cancellationToken);
+            cancellationToken,
+            json);
 
     private static void WriteTable(JsonArray groups)
     {

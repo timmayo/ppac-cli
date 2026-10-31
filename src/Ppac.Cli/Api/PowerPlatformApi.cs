@@ -57,8 +57,9 @@ public sealed class PowerPlatformApi
         return (response.StatusCode, body);
     }
 
-    // The error body shape is not documented for this API, so look for a
-    // conventional error.message and otherwise fall back to the raw text.
+    // Documented error body: ProblemDetails (RFC 7807: type, title, status, detail, instance, extensions).
+    // Only a 400 is documented, and live 404s came back with an empty body, so be lenient:
+    // use detail, then title, then a conventional error.message, then the raw text.
     private static string Describe(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
@@ -68,9 +69,14 @@ public sealed class PowerPlatformApi
 
         try
         {
-            if (JsonNode.Parse(body)?["error"]?["message"] is JsonNode message)
+            var node = JsonNode.Parse(body);
+            foreach (var candidate in new[] { node?["detail"], node?["title"], node?["error"]?["message"] })
             {
-                return message.ToString();
+                if (candidate is JsonValue value && value.TryGetValue<string>(out var text) &&
+                    !string.IsNullOrWhiteSpace(text))
+                {
+                    return text;
+                }
             }
         }
         catch (System.Text.Json.JsonException)

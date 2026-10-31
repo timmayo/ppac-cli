@@ -66,6 +66,26 @@ public sealed class EnvironmentGroupCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task List_table_shows_created_and_only_shows_the_parent_column_when_a_group_has_a_parent()
+    {
+        // Shape seen live on 2026-10-30: createdTime and createdBy{id,type} only; no parent or last-modified.
+        var live = new FakeHandler(_ => (HttpStatusCode.OK,
+            "{\"value\":[{\"id\":\"g1\",\"displayName\":\"Green Zone\",\"description\":\"Green Zone\"," +
+            "\"createdTime\":\"2025-12-03T16:31:06.7798965Z\",\"createdBy\":{\"id\":\"u1\",\"type\":\"User\"}}]}"));
+        await EnvironmentGroupCommands.ListCoreAsync(Api(live), Cloud, null, json: false, CancellationToken.None);
+        var text = _out.ToString();
+        Assert.Contains("Created", text);
+        Assert.Contains("2025-12-03T16:31:06.7798965Z", text);
+        Assert.DoesNotContain("Parent group ID", text);
+        Assert.DoesNotContain("Last modified", text);
+
+        _out.GetStringBuilder().Clear();
+        var nested = new FakeHandler(_ => (HttpStatusCode.OK, TwoGroups));
+        await EnvironmentGroupCommands.ListCoreAsync(Api(nested), Cloud, null, json: false, CancellationToken.None);
+        Assert.Contains("Parent group ID", _out.ToString());
+    }
+
+    [Fact]
     public async Task List_json_keeps_the_service_shape_and_empty_says_so()
     {
         var handler = new FakeHandler(_ => (HttpStatusCode.OK, TwoGroups));
@@ -119,23 +139,23 @@ public sealed class EnvironmentGroupCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task Get_with_a_group_that_returns_no_content_fails_with_exit_code_1()
+    public async Task Get_with_a_group_that_returns_no_content_fails_with_exit_code_4()
     {
         var handler = new FakeHandler(_ => (HttpStatusCode.NoContent, ""));
 
         var exitCode = await EnvironmentGroupCommands.GetCoreAsync(Api(handler), Cloud, "g1", json: false, CancellationToken.None);
 
-        Assert.Equal(ExitCodes.Failure, exitCode);
+        Assert.Equal(ExitCodes.NotFound, exitCode);
         Assert.Contains("no content", _err.ToString());
     }
 
     [Fact]
     public async Task Commands_run_without_arguments_so_they_only_fail_for_a_missing_profile_not_for_usage()
     {
-        Assert.Equal(ExitCodes.Failure, await RunCli("environment", "group", "list"));
+        Assert.Equal(ExitCodes.AuthRequired, await RunCli("environment", "group", "list"));
         Assert.Contains("No active profile", _err.ToString());
 
-        Assert.Equal(ExitCodes.Failure, await RunCli("environment", "group", "get"));
+        Assert.Equal(ExitCodes.AuthRequired, await RunCli("environment", "group", "get"));
     }
 
     [Fact]
